@@ -38,7 +38,7 @@ const CreateTask: React.FC = () => {
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold mb-2">创建评测任务</h1>
-        <p className="text-gray-600">配置测试参数并创建新的评测任务</p>
+        <p className="text-gray-600 dark:text-gray-300">配置测试参数并创建新的评测任务</p>
       </div>
 
       <Card>

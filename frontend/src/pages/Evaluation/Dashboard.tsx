@@ -233,7 +233,7 @@ const EvaluationDashboard: React.FC = () => {
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold mb-2">评测系统</h1>
-        <p className="text-gray-600">批量测试匹配引擎性能，分析失败原因，优化词表</p>
+        <p className="text-gray-600 dark:text-gray-300">批量测试匹配引擎性能，分析失败原因，优化词表</p>
       </div>
 
       {/* 统计卡片 */}

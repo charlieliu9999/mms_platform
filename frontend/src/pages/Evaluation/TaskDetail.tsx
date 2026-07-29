@@ -100,8 +100,8 @@ const TaskDetail: React.FC = () => {
       width: 200,
       render: (_: any, record: FailureCase) => (
         <div>
-          <div className="text-xs text-gray-500">{record.expected_code}</div>
-          <div>{record.expected_name}</div>
+          <div className="text-xs text-gray-400 dark:text-gray-500">{record.expected_code}</div>
+          <div className="text-gray-900 dark:text-gray-100">{record.expected_name}</div>
         </div>
       ),
     },
@@ -112,11 +112,11 @@ const TaskDetail: React.FC = () => {
       render: (_: any, record: FailureCase) =>
         record.actual_name ? (
           <div>
-            <div className="text-xs text-gray-500">{record.actual_code}</div>
-            <div>{record.actual_name}</div>
+            <div className="text-xs text-gray-400 dark:text-gray-500">{record.actual_code}</div>
+            <div className="text-gray-900 dark:text-gray-100">{record.actual_name}</div>
           </div>
         ) : (
-          <span className="text-gray-400">(未匹配)</span>
+          <span className="text-gray-500 dark:text-gray-400">(未匹配)</span>
         ),
     },
     {
@@ -162,8 +162,8 @@ const TaskDetail: React.FC = () => {
             返回
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">{task.name}</h1>
-            <p className="text-gray-600">{task.description}</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{task.name}</h1>
+            <p className="text-gray-600 dark:text-gray-300">{task.description}</p>
           </div>
         </div>
         <Button
