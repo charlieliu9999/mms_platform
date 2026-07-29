@@ -126,7 +126,8 @@ async def verify_samples(task_id: int, sample_rate: float = 0.01) -> dict:
 
         return {
             'total_samples': len(samples),
-            'passed': passed,
+            'passed': passed == len(samples) and failed == 0,
+            'passed_count': passed,
             'failed': failed,
             'errors': errors[:10],  # 最多显示 10 条错误
         }
@@ -195,7 +196,8 @@ async def verify_expires_at() -> dict:
 
         return {
             'total_samples': len(samples),
-            'passed': passed,
+            'passed': passed == len(samples) and failed == 0,
+            'passed_count': passed,
             'failed': failed,
             'errors': errors,
         }
@@ -240,7 +242,8 @@ async def verify_cache_hit(task_id: int, sample_size: int = 20) -> dict:
 
         return {
             'total_samples': len(details),
-            'passed': passed,
+            'passed': passed == len(details) and failed == 0,
+            'passed_count': passed,
             'failed': failed,
             'errors': errors,
         }
@@ -284,8 +287,8 @@ async def main():
 
     logger.info("验证 2: 抽样核对 (1%)...")
     results['samples'] = await verify_samples(args.task_id, 0.01)
-    if results['samples']['failed'] == 0:
-        logger.info(f"  ✓ 通过 - {results['samples']['passed']}/{results['samples']['total_samples']} 条")
+    if results['samples']['passed']:
+        logger.info(f"  ✓ 通过 - {results['samples']['passed_count']}/{results['samples']['total_samples']} 条")
     else:
         logger.error(f"  ✗ 失败 - {results['samples']['failed']} 条有误")
         for err in results['samples']['errors']:
@@ -300,8 +303,8 @@ async def main():
 
     logger.info("验证 4: 过期时间有效性...")
     results['expires'] = await verify_expires_at()
-    if results['expires']['failed'] == 0:
-        logger.info(f"  ✓ 通过 - {results['expires']['passed']}/{results['expires']['total_samples']} 条")
+    if results['expires']['passed']:
+        logger.info(f"  ✓ 通过 - {results['expires']['passed_count']}/{results['expires']['total_samples']} 条")
     else:
         logger.error(f"  ✗ 失败 - {results['expires']['failed']} 条有误")
         for err in results['expires']['errors']:
@@ -309,8 +312,8 @@ async def main():
 
     logger.info("验证 5: 缓存命中测试...")
     results['cache_hit'] = await verify_cache_hit(args.task_id, 20)
-    if results['cache_hit']['failed'] == 0:
-        logger.info(f"  ✓ 通过 - {results['cache_hit']['passed']}/{results['cache_hit']['total_samples']} 条")
+    if results['cache_hit']['passed']:
+        logger.info(f"  ✓ 通过 - {results['cache_hit']['passed_count']}/{results['cache_hit']['total_samples']} 条")
     else:
         logger.error(f"  ✗ 失败 - {results['cache_hit']['failed']} 条有误")
         for err in results['cache_hit']['errors']:
@@ -327,6 +330,11 @@ async def main():
 
     # 总结
     logger.info("=" * 70)
+
+    # 调试：输出所有结果
+    for key, val in results.items():
+        logger.debug(f"验证项 {key}: passed={val.get('passed')}, type={type(val.get('passed'))}")
+
     passed_count = sum(1 for r in results.values() if r.get('passed') is True)
     total_count = sum(1 for r in results.values() if r.get('passed') is not None)
 

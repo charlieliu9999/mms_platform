@@ -54,11 +54,13 @@ async def analyze_by_modality(task_id: int) -> list[dict]:
     """按模态统计"""
     session_factory = get_session_factory()
     async with session_factory() as session:
+        from sqlalchemy import Integer, case
+
         query = select(
             EvalDetail.modality,
             func.count(EvalDetail.id).label('total'),
-            func.sum(func.cast(EvalDetail.is_matched, func.Integer)).label('matched'),
-            func.sum(func.cast(EvalDetail.is_correct, func.Integer)).label('correct'),
+            func.sum(case((EvalDetail.is_matched == True, 1), else_=0)).label('matched'),
+            func.sum(case((EvalDetail.is_correct == True, 1), else_=0)).label('correct'),
             func.avg(EvalDetail.confidence).label('avg_conf'),
         ).where(EvalDetail.task_id == task_id).group_by(EvalDetail.modality)
 
