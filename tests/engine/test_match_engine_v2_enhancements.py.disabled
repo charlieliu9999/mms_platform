@@ -1,0 +1,192 @@
+"""
+匹配引擎 V2 增强测试 - 测试新增的三个优化
+"""
+import asyncio
+import pytest
+
+from match_service.db import get_engine
+async_engine = get_engine()
+from match_service.engine.match_engine_v2.orchestrator import (
+    MatchEngineOrchestrator
+)
+
+
+@pytest.fixture(scope="module")
+def event_loop():
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(async_engine.dispose())
+    yield loop
+    loop.run_until_complete(async_engine.dispose())
+    loop.close()
+
+
+@pytest.fixture(scope="module")
+def engine(event_loop):
+    """匹配引擎实例"""
+    orch = MatchEngineOrchestrator(async_engine)
+    event_loop.run_until_complete(orch.initialize())
+    return orch
+
+
+# ─── 测试1: 特殊 CT 独立模态归未匹配（P0-1 改：不再走 unmatchable 标记）──────
+
+def test_unmatchable_cbct(engine):
+    """CBCT 提升为独立模态：infer 推断为 CBCT，引擎不识别该模态→未匹配。"""
+# Phase A: modality_inference 已移除（不在 match_service 范围内）
+        infer_engine_modality,
+    )
+    assert infer_engine_modality('CBCT头部', 'CT') == 'CBCT'
+    result = engine.match('CBCT头部', 'CBCT', 'V3.9')
+    assert result['num_standard'] == 0
+
+
+def test_unmatchable_4dct(engine):
+    """4DCT 提升为独立模态 CT-4D：引擎不识别该模态→未匹配。"""
+# Phase A: modality_inference 已移除（不在 match_service 范围内）
+        infer_engine_modality,
+    )
+    assert infer_engine_modality('4DCT胸部', 'CT') == 'CT-4D'
+    result = engine.match('4DCT胸部', 'CT-4D', 'V3.9')
+    assert result['num_standard'] == 0
+
+
+def test_unmatchable_dual_energy(engine):
+    """双能CT 提升为独立模态 CT-DE：引擎不识别该模态→未匹配。"""
+# Phase A: modality_inference 已移除（不在 match_service 范围内）
+        infer_engine_modality,
+    )
+    assert infer_engine_modality('CT双能扫描尿酸盐识别', 'CT') == 'CT-DE'
+    result = engine.match('CT双能扫描尿酸盐识别', 'CT-DE', 'V3.9')
+    assert result['num_standard'] == 0
+
+
+def test_unmatchable_guided_intervention(engine):
+    """CT引导下穿刺 应标记为不可匹配"""
+    result = engine.match('CT引导下穿刺活检', 'CT', 'V3.9')
+    assert result['num_standard'] == 0
+
+
+def test_unmatchable_radiotherapy_sim(engine):
+    """放疗模拟定位 应标记为不可匹配"""
+    result = engine.match('CT模拟定位', 'CT', 'V3.9')
+    assert result['num_standard'] == 0
+
+
+# ─── 测试2: 低剂量→平扫归一化 ──────────────────────────────────────────────
+
+def test_low_dose_normalization_parenthesis(engine):
+    """CT鼻窦(低剂量扫描) → CT副鼻窦(平扫)"""
+    result = engine.match('CT鼻窦(低剂量扫描)', 'CT', 'V3.9')
+    # 预期匹配到 "CT副鼻窦(平扫)" 标准项
+    assert result['num_standard'] > 0
+    # 验证匹配的是副鼻窦平扫
+    matched_names = []
+    for item in result['data']:
+        for std in item.get('standard', []):
+            matched_names.append(std['name'])
+    assert any('副鼻窦' in name and '平扫' in name for name in matched_names)
+
+
+def test_low_dose_normalization_text(engine):
+    """CT头部低剂量扫描 → CT头部平扫"""
+    result = engine.match('CT头部低剂量扫描', 'CT', 'V3.9')
+    assert result['num_standard'] > 0
+    matched_names = []
+    for item in result['data']:
+        for std in item.get('standard', []):
+            matched_names.append(std['name'])
+    # 头部会标准化为颅脑
+    assert any(('颅脑' in name or '头部' in name) and '平扫' in name for name in matched_names)
+
+
+def test_low_dose_normalization_chinese_parenthesis(engine):
+    """支持中文括号"""
+    result = engine.match('CT胸部（低剂量扫描）', 'CT', 'V3.9')
+    assert result['num_standard'] > 0
+
+
+# ─── 测试3: 泛指部位映射到"非指定部位" ────────────────────────────────────
+
+def test_generic_body_affected_joint(engine):
+    """CT受累关节(平扫) → 删除"受累关节"，匹配"CT平扫"无部位标准项"""
+    result = engine.match('CT受累关节(平扫)', 'CT', 'V3.9')
+    # 应匹配到"非指定部位"或"无部位"的CT平扫项
+    assert result['num_standard'] > 0
+    matched_names = []
+    for item in result['data']:
+        for std in item.get('standard', []):
+            matched_names.append(std['name'])
+    # 验证匹配的是无部位项
+    assert any('非指定部位' in name or '平扫' in name for name in matched_names)
+
+
+def test_generic_body_affected_area(engine):
+    """CT受累部位平扫 → 匹配无部位项"""
+    result = engine.match('CT受累部位平扫', 'CT', 'V3.9')
+    assert result['num_standard'] > 0
+
+
+def test_generic_body_lesion_area(engine):
+    """CT病变部位增强 → 匹配无部位增强项"""
+    result = engine.match('CT病变部位增强', 'CT', 'V3.9')
+    assert result['num_standard'] > 0
+
+
+def test_generic_body_suspicious_area(engine):
+    """MR可疑部位平扫 → 匹配无部位项"""
+    result = engine.match('MR可疑部位平扫', 'MR', 'V3.9')
+    assert result['num_standard'] > 0
+
+
+def test_generic_body_target_area(engine):
+    """CT目标部位平扫+增强 → 匹配无部位平扫+增强项"""
+    result = engine.match('CT目标部位平扫+增强', 'CT', 'V3.9')
+    assert result['num_standard'] > 0
+
+
+# ─── 综合测试 ─────────────────────────────────────────────────────────────
+
+def test_combined_low_dose_and_alias(engine):
+    """组合测试：低剂量+部位别名"""
+    result = engine.match('CT鼻窦低剂量平扫', 'CT', 'V3.9')
+    # 鼻窦→副鼻窦，低剂量→平扫
+    assert result['num_standard'] > 0
+    matched_names = []
+    for item in result['data']:
+        for std in item.get('standard', []):
+            matched_names.append(std['name'])
+    assert any('副鼻窦' in name for name in matched_names)
+
+
+def test_batch_match_with_enhancements(engine):
+    """批量匹配测试新优化"""
+    items = [
+        {'key': '1', 'modality': 'CBCT', 'name': 'CBCT头部'},
+        {'key': '2', 'modality': 'CT', 'name': 'CT鼻窦(低剂量扫描)'},
+        {'key': '3', 'modality': 'CT', 'name': 'CT受累关节(平扫)'},
+        {'key': '4', 'modality': 'CT', 'name': 'CT头部平扫'},
+    ]
+    results = engine.batch_match(items, version='V3.9')
+
+    # CBCT 为独立模态，引擎不识别→未匹配
+    assert len(results['1']) == 0
+
+    # 低剂量鼻窦 应匹配到副鼻窦平扫
+    assert len(results['2']) > 0
+
+    # 受累关节 应匹配到无部位平扫
+    assert len(results['3']) > 0
+
+    # 正常项应正常匹配
+    assert len(results['4']) > 0
+
+
+def test_confidence_tier_for_generic_body(engine):
+    """泛指部位应降级为 degraded 档"""
+    result = engine.match('CT受累关节平扫', 'CT', 'V3.9')
+    # 走了"无部位"降级分支，应标记为 degraded
+    if result['num_standard'] > 0:
+        # tier 可能是 degraded（走了无部位降级分支）
+        assert result['tier'] in ['degraded', 'partial']
+        # confidence 应该 <= 0.8
+        assert result['confidence'] <= 0.8

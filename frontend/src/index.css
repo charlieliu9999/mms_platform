@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --primary: #1e40af;
+    --primary-light: #3b82f6;
+    --primary-dark: #1e3a8a;
+  }
+
+  /* 自定义微型滚动条 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: #475569;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+  }
+}
+
+/* Ant Design 暗色模式与统一品牌色适配 */
+.dark .ant-layout,
+.dark .ant-layout-header,
+.dark .ant-layout-sider {
+  background: #18181b !important;
+}
+
+.dark .ant-menu {
+  background: #18181b !important;
+  color: #a1a1aa !important;
+}
+
+.dark .ant-menu-item-selected {
+  background-color: rgba(30, 64, 175, 0.2) !important;
+  color: #60a5fa !important;
+}
+
+.dark .ant-card {
+  background: #18181b !important;
+  border-color: #27272a !important;
+  color: #f4f4f5 !important;
+}
+
+.dark .ant-card-head {
+  color: #f4f4f5 !important;
+  border-bottom-color: #27272a !important;
+}
+
+.dark .ant-statistic-title {
+  color: #a1a1aa !important;
+}
+
+.dark .ant-descriptions-title,
+.dark .ant-descriptions-item-label,
+.dark .ant-descriptions-item-content {
+  color: #e4e4e7 !important;
+  border-color: #27272a !important;
+}
+
+.dark .ant-input,
+.dark .ant-select-selector {
+  background-color: #27272a !important;
+  border-color: #3f3f46 !important;
+  color: #f4f4f5 !important;
+}
+
+.dark .ant-input::placeholder {
+  color: #71717a !important;
+}
+
+.dark .ant-table {
+  background: #18181b !important;
+  color: #e4e4e7 !important;
+}
+
+.dark .ant-table-thead > tr > th {
+  background: #27272a !important;
+  color: #e4e4e7 !important;
+  border-bottom-color: #3f3f46 !important;
+}
+
+.dark .ant-table-tbody > tr > td {
+  border-bottom-color: #27272a !important;
+}
+
+.dark .ant-table-tbody > tr:hover > td {
+  background: #27272a !important;
+}
+
+.dark .ant-pagination-item {
+  background: #27272a !important;
+  border-color: #3f3f46 !important;
+}
+
+.dark .ant-pagination-item a {
+  color: #e4e4e7 !important;
+}
+
+.dark .ant-pagination-item-active {
+  border-color: #3b82f6 !important;
+}
+
+.dark .ant-modal-content,
+.dark .ant-modal-header {
+  background-color: #18181b !important;
+  color: #f4f4f5 !important;
+}
+
+.dark .ant-modal-title {
+  color: #f4f4f5 !important;
+}
+

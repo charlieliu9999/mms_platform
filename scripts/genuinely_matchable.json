@@ -1,0 +1,427 @@
+[
+  {
+    "id": 801,
+    "text": "X线曲面体层摄影(全景片)",
+    "modality": "DR"
+  },
+  {
+    "id": 803,
+    "text": "X线曲面体层摄影(全景片)",
+    "modality": "DR"
+  },
+  {
+    "id": 804,
+    "text": "X线受照长骨(常规摄影)",
+    "modality": "DR"
+  },
+  {
+    "id": 806,
+    "text": "X线受照长骨(常规摄影)",
+    "modality": "DR"
+  },
+  {
+    "id": 807,
+    "text": "X线受照部位骨骼(常规摄影)",
+    "modality": "DR"
+  },
+  {
+    "id": 808,
+    "text": "X线受照部位骨骼(常规摄影)",
+    "modality": "DR"
+  },
+  {
+    "id": 813,
+    "text": "DSA血管造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 819,
+    "text": "DSA四肢动脉造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 820,
+    "text": "DSA胸腹盆动脉血管造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 821,
+    "text": "DSA上肢及上腔静脉造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 822,
+    "text": "DSA髂静脉造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 825,
+    "text": "DSA髂静脉手术",
+    "modality": "DSA"
+  },
+  {
+    "id": 827,
+    "text": "DSA上肢血管造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 828,
+    "text": "DSA颈部血管造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 836,
+    "text": "DSA动脉血管造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 839,
+    "text": "DSA颅外段血管造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 841,
+    "text": "DSA腹部动脉造影",
+    "modality": "DSA"
+  },
+  {
+    "id": 847,
+    "text": "MR骨骼(化学位移成像)",
+    "modality": "MR"
+  },
+  {
+    "id": 849,
+    "text": "MR骨骼(化学位移成像)",
+    "modality": "MR"
+  },
+  {
+    "id": 851,
+    "text": "SPECT全身显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 852,
+    "text": "SPECT放射性核素大动脉显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 853,
+    "text": "SPECT亲肿瘤显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 854,
+    "text": "SPECT胃排空功能测定",
+    "modality": "SPECT"
+  },
+  {
+    "id": 856,
+    "text": "SPECT放射性核素静脉显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 857,
+    "text": "SPECT/CT全身(131I-WBS+SPECT/CT)",
+    "modality": "SPECT"
+  },
+  {
+    "id": 858,
+    "text": "SPECT/CT全身放射性同位素示踪法(白细胞标记)",
+    "modality": "SPECT"
+  },
+  {
+    "id": 859,
+    "text": "SPECT/CT颈部及纵隔核素显像(MIBI)",
+    "modality": "SPECT"
+  },
+  {
+    "id": 860,
+    "text": "SPECT膀胱显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 861,
+    "text": "SPECT/CT颅底",
+    "modality": "SPECT"
+  },
+  {
+    "id": 862,
+    "text": "SPECT放射性核素标记白细胞显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 863,
+    "text": "SPECT上肢静脉显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 864,
+    "text": "SPECT心脏显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 865,
+    "text": "SPECT/CT颈胸部(延迟相)",
+    "modality": "SPECT"
+  },
+  {
+    "id": 866,
+    "text": "SPECT首次通过心血池显像",
+    "modality": "SPECT"
+  },
+  {
+    "id": 867,
+    "text": "SPECT/CT颈部及上纵隔(双时相融合显像)",
+    "modality": "SPECT"
+  },
+  {
+    "id": 868,
+    "text": "US脐动脉(频谱多普勒超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 874,
+    "text": "US双胎输血综合征超声检查(TTTS 超声筛查)",
+    "modality": "US"
+  },
+  {
+    "id": 889,
+    "text": "US肝胆胰常规超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 894,
+    "text": "US动静脉内瘘彩色多普勒超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 897,
+    "text": "US胃部(双重超声造影检查)",
+    "modality": "US"
+  },
+  {
+    "id": 901,
+    "text": "US肾静脉常规超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 902,
+    "text": "US胃部(充盈超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 908,
+    "text": "US眼前节超声生物显微镜检查(UBM)",
+    "modality": "US"
+  },
+  {
+    "id": 910,
+    "text": "US常规超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 912,
+    "text": "US指(趾)甲(高频超声)",
+    "modality": "US"
+  },
+  {
+    "id": 917,
+    "text": "US全脊柱超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 919,
+    "text": "US超声造影检查",
+    "modality": "US"
+  },
+  {
+    "id": 923,
+    "text": "US腹直肌(高频超声)",
+    "modality": "US"
+  },
+  {
+    "id": 924,
+    "text": "US彩色多普勒超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 925,
+    "text": "US胃部(胃运动功能检查)",
+    "modality": "US"
+  },
+  {
+    "id": 926,
+    "text": "US胃幽门部(常规超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 927,
+    "text": "US胃部(双重超声造影)",
+    "modality": "US"
+  },
+  {
+    "id": 928,
+    "text": "US胃部(口服超声造影)",
+    "modality": "US"
+  },
+  {
+    "id": 929,
+    "text": "US双侧锁骨下静脉彩色多普勒超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 930,
+    "text": "胃充盈排空功能造影超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 931,
+    "text": "胃充盈排空功能三维超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 932,
+    "text": "胃充盈排空功能常规超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 934,
+    "text": "外周神经三维超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 935,
+    "text": "外周神经常规超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 937,
+    "text": "US肝胆胰常规超声检查",
+    "modality": "US"
+  },
+  {
+    "id": 941,
+    "text": "US胃部(双重超声造影检查)",
+    "modality": "US"
+  },
+  {
+    "id": 942,
+    "text": "US胃部(充盈超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 946,
+    "text": "US经颅彩色多普勒超声检查（TCCD）",
+    "modality": "US"
+  },
+  {
+    "id": 947,
+    "text": "US眼前节超声生物显微镜检查(UBM)",
+    "modality": "US"
+  },
+  {
+    "id": 950,
+    "text": "US深静脉多普勒超声检查(颈内静脉/锁骨下静脉/股静脉)",
+    "modality": "US"
+  },
+  {
+    "id": 951,
+    "text": "US指(趾)甲(高频超声)",
+    "modality": "US"
+  },
+  {
+    "id": 954,
+    "text": "US腹直肌(高频超声)",
+    "modality": "US"
+  },
+  {
+    "id": 955,
+    "text": "US 脐带血流动力学监测(多普勒)",
+    "modality": "US"
+  },
+  {
+    "id": 956,
+    "text": "US胃部(胃运动功能检查)",
+    "modality": "US"
+  },
+  {
+    "id": 957,
+    "text": "US胃幽门部(常规超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 959,
+    "text": "US胃部(双重超声造影)",
+    "modality": "US"
+  },
+  {
+    "id": 960,
+    "text": "US胃部(口服超声造影)",
+    "modality": "US"
+  },
+  {
+    "id": 962,
+    "text": "US胎盘(彩色多普勒超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 963,
+    "text": "US脐动脉(多普勒超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 964,
+    "text": "US双胎隔膜与胎盘(常规超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 965,
+    "text": "US大脑中动脉(彩色及频谱多普勒超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 966,
+    "text": "US脐动脉(频谱多普勒超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 971,
+    "text": "US 脐带血流动力学监测(多普勒)",
+    "modality": "US"
+  },
+  {
+    "id": 972,
+    "text": "US深静脉多普勒超声检查(颈内静脉/锁骨下静脉/股静脉)",
+    "modality": "US"
+  },
+  {
+    "id": 973,
+    "text": "US胎盘(彩色多普勒超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 974,
+    "text": "US脐动脉(多普勒超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 975,
+    "text": "US双胎隔膜与胎盘(常规超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 977,
+    "text": "US大脑中动脉(彩色及频谱多普勒超声检查)",
+    "modality": "US"
+  },
+  {
+    "id": 980,
+    "text": "X线口内根尖周片(根尖片)",
+    "modality": "DR"
+  },
+  {
+    "id": 983,
+    "text": "X线口内根尖周片(根尖片)",
+    "modality": "DR"
+  }
+]
