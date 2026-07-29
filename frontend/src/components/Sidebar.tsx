@@ -9,6 +9,7 @@ import {
   RobotOutlined,
   HistoryOutlined,
   MedicineBoxOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -45,6 +46,11 @@ const Sidebar: React.FC = () => {
       label: '未匹配工作台',
     },
     {
+      key: '/evaluation',
+      icon: <ExperimentOutlined />,
+      label: '评测系统',
+    },
+    {
       key: '/agent',
       icon: <RobotOutlined />,
       label: 'AI 建议',
@@ -56,7 +62,11 @@ const Sidebar: React.FC = () => {
     },
   ];
 
-  const selectedKey = location.pathname === '/check-standard-items' ? '/standard-items' : location.pathname;
+  const selectedKey = location.pathname === '/check-standard-items'
+    ? '/standard-items'
+    : location.pathname.startsWith('/evaluation')
+    ? '/evaluation'
+    : location.pathname;
 
   return (
     <Sider

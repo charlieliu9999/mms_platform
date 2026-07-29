@@ -8,6 +8,9 @@ import MatchTest from './pages/MatchTest';
 import LexiconMgmt from './pages/LexiconMgmt';
 import StandardItems from './pages/StandardItems';
 import UnmatchedWorkbench from './pages/UnmatchedWorkbench';
+import EvaluationDashboard from './pages/Evaluation/Dashboard';
+import CreateTask from './pages/Evaluation/CreateTask';
+import TaskDetail from './pages/Evaluation/TaskDetail';
 
 const { Header, Content } = Layout;
 
@@ -67,6 +70,9 @@ const App: React.FC = () => {
               <Route path="/standard-items" element={<StandardItems />} />
               <Route path="/check-standard-items" element={<StandardItems />} />
               <Route path="/unmatched" element={<UnmatchedWorkbench />} />
+              <Route path="/evaluation" element={<EvaluationDashboard />} />
+              <Route path="/evaluation/create" element={<CreateTask />} />
+              <Route path="/evaluation/tasks/:taskId" element={<TaskDetail />} />
 
               <Route path="/agent" element={
                 <div className="text-center py-24 space-y-2">
