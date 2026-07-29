@@ -25,6 +25,16 @@ from ..models.evaluation import EvalTask, EvalDetail
 
 logger = logging.getLogger(__name__)
 
+# tier → confidence 映射，与 engine/match_engine_v2/orchestrator.py 保持一致
+TIER_CONFIDENCE = {
+    'exact': 1.0,
+    'partial': 0.8,
+    'degraded': 0.6,
+    'ambiguous': 0.4,
+    'none': 0.0,
+    'error': 0.0,
+}
+
 
 def _fuzzy_match(expected: str, actual: str) -> bool:
     """
@@ -187,7 +197,12 @@ class EvaluationRunner:
                                 standard = standard_items[0]
                                 actual_code = str(standard.get('code', '')).strip()
                                 actual_name = standard.get('name', '')
-                                confidence = match_result.get('score', 0.0)
+                                # 置信度取 confidence 字段（0.0-1.0），不是 score（0-10）
+                                confidence = match_result.get('confidence')
+                                if confidence is None:
+                                    confidence = TIER_CONFIDENCE.get(
+                                        match_result.get('tier', 'none'), 0.0
+                                    )
 
                                 results['total_confidence'] += confidence
 
