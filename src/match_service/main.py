@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from .api.legacy import legacy_router
 from .api.routes import router
 from .api.admin import router as admin_router
+from .api.evaluation import router as evaluation_router
 from .config import get_settings
 from .core.engine_holder import get_engine_holder
 from .db import get_engine
@@ -73,6 +74,8 @@ app.include_router(router, prefix="/api", tags=["matching"])
 app.include_router(legacy_router)
 # 管理后台 API（Phase E）- admin_router 已包含 /api/admin prefix
 app.include_router(admin_router)
+# 评测系统 API（Phase F）- evaluation_router 已包含 /api/evaluation prefix
+app.include_router(evaluation_router)
 
 # 挂载前端静态文件（生产部署时使用）
 frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"

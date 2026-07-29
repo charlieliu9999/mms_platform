@@ -112,41 +112,44 @@ def analyze_phrase_diff(zzy_phrase, mms_phrase):
         mms_phrase = mms_phrase.rename(columns={'modality': 'device'})
 
     # 创建唯一键（device + src_word + dst_word）
-    zzy_phrase['key'] = (zzy_phrase['device'].fillna('').astype(str) + '|' +
-                         zzy_phrase['src_word'].astype(str) + '|' +
-                         zzy_phrase['dst_word'].astype(str))
-    mms_phrase['key'] = (mms_phrase['device'].fillna('').astype(str) + '|' +
-                         mms_phrase['src_word'].astype(str) + '|' +
-                         mms_phrase['dst_word'].astype(str))
+    zzy_phrase_copy = zzy_phrase.copy()
+    mms_phrase_copy = mms_phrase.copy()
+
+    zzy_phrase_copy['key'] = (zzy_phrase_copy['device'].fillna('').astype(str) + '|' +
+                         zzy_phrase_copy['src_word'].astype(str) + '|' +
+                         zzy_phrase_copy['dst_word'].astype(str))
+    mms_phrase_copy['key'] = (mms_phrase_copy['device'].fillna('').astype(str) + '|' +
+                         mms_phrase_copy['src_word'].astype(str) + '|' +
+                         mms_phrase_copy['dst_word'].astype(str))
 
     # 获取键集合
-    zzy_keys = set(zzy_phrase['key'])
-    mms_keys = set(mms_phrase['key'])
+    zzy_keys = set(zzy_phrase_copy['key'])
+    mms_keys = set(mms_phrase_copy['key'])
 
     # 计算差异
     zzy_only = zzy_keys - mms_keys
     mms_only = mms_keys - zzy_keys
     common = zzy_keys & mms_keys
 
-    # 统计信息
-    total_zzy = len(zzy_keys)
-    total_mms = len(mms_keys)
+    # 统计信息（使用原始数据计数）
+    total_zzy = len(zzy_phrase)
+    total_mms = len(mms_phrase)
     total_zzy_only = len(zzy_only)
     total_mms_only = len(mms_only)
     total_common = len(common)
 
     print(f"16_zzy 短语总数: {total_zzy}")
     print(f"MMS 短语总数: {total_mms}")
-    print(f"16_zzy 特有短语: {total_zzy_only} ({total_zzy_only/total_zzy*100:.2f}%)")
-    print(f"MMS 特有短语: {total_mms_only} ({total_mms_only/total_mms*100:.2f}%)")
-    print(f"重叠短语: {total_common} ({total_common/total_zzy*100:.2f}% of zzy, {total_common/total_mms*100:.2f}% of mms)")
+    print(f"16_zzy 特有短语映射: {total_zzy_only} (唯一键数)")
+    print(f"MMS 特有短语映射: {total_mms_only} (唯一键数)")
+    print(f"重叠短语映射: {total_common} (唯一键数)")
 
     # 生成差异分析结果
     diff_results = []
 
     # 16_zzy 特有短语
     for key in sorted(zzy_only):
-        row = zzy_phrase[zzy_phrase['key'] == key].iloc[0]
+        row = zzy_phrase_copy[zzy_phrase_copy['key'] == key].iloc[0]
         diff_results.append({
             'device': row['device'],
             'src_word': row['src_word'],
@@ -159,7 +162,7 @@ def analyze_phrase_diff(zzy_phrase, mms_phrase):
 
     # MMS 特有短语
     for key in sorted(mms_only):
-        row = mms_phrase[mms_phrase['key'] == key].iloc[0]
+        row = mms_phrase_copy[mms_phrase_copy['key'] == key].iloc[0]
         diff_results.append({
             'device': row['device'],
             'src_word': row['src_word'],
@@ -172,8 +175,8 @@ def analyze_phrase_diff(zzy_phrase, mms_phrase):
 
     # 重叠短语
     for key in sorted(common):
-        row_zzy = zzy_phrase[zzy_phrase['key'] == key].iloc[0]
-        row_mms = mms_phrase[mms_phrase['key'] == key].iloc[0]
+        row_zzy = zzy_phrase_copy[zzy_phrase_copy['key'] == key].iloc[0]
+        row_mms = mms_phrase_copy[mms_phrase_copy['key'] == key].iloc[0]
         diff_results.append({
             'device': row_mms['device'],
             'src_word': row_mms['src_word'],
@@ -239,39 +242,48 @@ def merge_phrases(zzy_phrase, mms_phrase, phrase_diff_df):
     if 'modality' in mms_phrase.columns:
         mms_phrase = mms_phrase.rename(columns={'modality': 'device'})
 
-    # 从 MMS 短语映射开始
+    # 从 MMS 短语映射开始（保留所有原始记录）
     merged_phrase = mms_phrase.copy()
 
-    # 添加 16_zzy 特有短语
-    zzy_only_phrases = phrase_diff_df[phrase_diff_df['source'] == '16_zzy_only']
-
-    if not zzy_only_phrases.empty:
-        # 更新版本号为当前版本
-        zzy_only_phrases = zzy_only_phrases.copy()
-        zzy_only_phrases['version'] = 'V3.8.2'
-
-        # 只保留必要的列
-        cols = ['device', 'src_word', 'dst_word', 'step', 'version']
-        zzy_only_phrases = zzy_only_phrases[cols]
-
-        merged_phrase = pd.concat([merged_phrase, zzy_only_phrases], ignore_index=True)
-
-    # 创建唯一键进行去重
+    # 为 MMS 短语创建唯一键用于查重
     merged_phrase['key'] = (merged_phrase['device'].fillna('').astype(str) + '|' +
                            merged_phrase['src_word'].astype(str) + '|' +
                            merged_phrase['dst_word'].astype(str))
+    existing_keys = set(merged_phrase['key'])
 
-    # 去重（保留第一条，即 MMS 的记录）
-    merged_phrase = merged_phrase.drop_duplicates(subset=['key'], keep='first')
+    # 添加 16_zzy 特有短语（不在 MMS 中的）
+    zzy_only_phrases = phrase_diff_df[phrase_diff_df['source'] == '16_zzy_only'].copy()
+
+    new_records = []
+    if not zzy_only_phrases.empty:
+        for _, row in zzy_only_phrases.iterrows():
+            # 创建键检查是否已存在
+            key = f"{row['device']}|{row['src_word']}|{row['dst_word']}"
+            if key not in existing_keys:
+                new_records.append({
+                    'device': row['device'],
+                    'src_word': row['src_word'],
+                    'dst_word': row['dst_word'],
+                    'step': row['step'],
+                    'version': 'V3.8.2',
+                    'enable': 1,
+                    'source': 'zzy'
+                })
+                existing_keys.add(key)
+
+    if new_records:
+        new_df = pd.DataFrame(new_records)
+        merged_phrase = pd.concat([merged_phrase, new_df], ignore_index=True)
 
     # 删除临时键列
-    merged_phrase = merged_phrase.drop('key', axis=1)
+    if 'key' in merged_phrase.columns:
+        merged_phrase = merged_phrase.drop('key', axis=1)
 
     # 排序
     merged_phrase = merged_phrase.sort_values(['device', 'src_word']).reset_index(drop=True)
 
     print(f"合并后短语总数: {len(merged_phrase)}")
-    print(f"新增短语数: {len(zzy_only_phrases)}")
+    print(f"新增短语数: {len(new_records)}")
 
     return merged_phrase
 

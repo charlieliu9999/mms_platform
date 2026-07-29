@@ -78,7 +78,7 @@ check_database() {
     echo -e "${GREEN}[4/5] 检查数据库连接...${NC}"
 
     # 尝试连接数据库
-    if poetry run python -c "
+    poetry run python -c "
 from match_service.db import get_engine
 import asyncio
 
@@ -90,20 +90,16 @@ async def test():
         print('  ✓ 数据库连接成功')
         return True
     except Exception as e:
-        print(f'  ✗ 数据库连接失败: {e}')
+        print(f'  ⚠ 数据库连接失败（将回退内置规则引擎运行）')
         return False
     finally:
         await engine.dispose()
 
 asyncio.run(test())
-" 2>/dev/null; then
-        echo ""
-    else
-        echo -e "${RED}  ⚠ 数据库连接失败，请检查配置${NC}"
-        echo "  提示: 确保 PostgreSQL 已启动，并配置环境变量"
-        echo ""
-    fi
+" || true
+    echo ""
 }
+
 
 # 启动服务
 start_services() {
