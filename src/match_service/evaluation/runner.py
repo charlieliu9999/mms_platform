@@ -156,8 +156,24 @@ class EvaluationRunner:
 
                                 results['total_confidence'] += confidence
 
-                                # 判断正确性（比对名称而非编码，避免版本差异问题）
-                                is_correct = actual_name == expected_name
+                                # 判断正确性
+                                # 改进逻辑：在所有候选结果中查找期望项（不限于第一个）
+                                is_correct = False
+                                actual_code_used = actual_code
+                                actual_name_used = actual_name
+
+                                # 方案1：检查所有候选结果中是否有匹配的
+                                for candidate in match_result['data']:
+                                    for std_item in candidate.get('standard', []):
+                                        std_name = std_item.get('name', '')
+                                        if std_name == expected_name:
+                                            is_correct = True
+                                            actual_code_used = str(std_item.get('code', '')).strip()
+                                            actual_name_used = std_name
+                                            break
+                                    if is_correct:
+                                        break
+
                                 match_type = 'exact' if is_correct else 'wrong'
 
                                 if is_correct:
@@ -169,10 +185,10 @@ class EvaluationRunner:
                                 await self._save_detail(
                                     session, task_id, check_item, modality,
                                     expected_code, expected_name,
-                                    actual_code, actual_name, confidence, response_time,
+                                    actual_code_used, actual_name_used, confidence, response_time,
                                     True, is_correct, match_type,
                                     None if is_correct else 'wrong_match',
-                                    None if is_correct else f'期望: {expected_name}, 实际: {actual_name}'
+                                    None if is_correct else f'期望: {expected_name}, 实际: {actual_name_used}'
                                 )
                             else:
                                 # 匹配但无标准项
