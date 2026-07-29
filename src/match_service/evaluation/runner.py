@@ -9,6 +9,7 @@
 """
 
 import logging
+import re
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -23,6 +24,40 @@ from ..db import get_session_factory
 from ..models.evaluation import EvalTask, EvalDetail
 
 logger = logging.getLogger(__name__)
+
+
+def _fuzzy_match(expected: str, actual: str) -> bool:
+    """
+    模糊匹配：移除标点符号和空格后比较
+
+    用于处理名称略有差异的情况：
+    - CTA vs CTPA
+    - 三维重建 vs 三维成像
+    - 中下腹部 vs 下腹部
+    """
+    # 移除标点符号、空格、星号
+    clean_expected = re.sub(r'[*\(\)\s+\-、，。]', '', expected)
+    clean_actual = re.sub(r'[*\(\)\s+\-、，。]', '', actual)
+
+    # 检查包含关系（双向）
+    if clean_expected in clean_actual or clean_actual in clean_expected:
+        return True
+
+    # 检查核心内容（去掉"CT"和模态词后）
+    clean_expected = re.sub(r'^CT', '', clean_expected)
+    clean_actual = re.sub(r'^CT', '', clean_actual)
+
+    # 至少80%相似
+    if len(clean_expected) > 0 and len(clean_actual) > 0:
+        shorter = min(len(clean_expected), len(clean_actual))
+        longer = max(len(clean_expected), len(clean_actual))
+
+        # 简单的包含度检查
+        if shorter / longer >= 0.8:
+            common_chars = sum(1 for c in clean_expected if c in clean_actual)
+            return common_chars / longer >= 0.7
+
+    return False
 
 
 class EvaluationRunner:
@@ -157,24 +192,38 @@ class EvaluationRunner:
                                 results['total_confidence'] += confidence
 
                                 # 判断正确性
-                                # 改进逻辑：在所有候选结果中查找期望项（不限于第一个）
+                                # 改进逻辑：
+                                # 1. 在所有候选结果中查找期望项（不限于第一个）
+                                # 2. 使用模糊匹配处理名称略有差异的情况
                                 is_correct = False
                                 actual_code_used = actual_code
                                 actual_name_used = actual_name
+                                match_method = 'none'  # none/exact/fuzzy
 
-                                # 方案1：检查所有候选结果中是否有匹配的
+                                # 检查所有候选结果
                                 for candidate in match_result['data']:
                                     for std_item in candidate.get('standard', []):
                                         std_name = std_item.get('name', '')
+
+                                        # 完全匹配
                                         if std_name == expected_name:
                                             is_correct = True
+                                            match_method = 'exact'
                                             actual_code_used = str(std_item.get('code', '')).strip()
                                             actual_name_used = std_name
                                             break
-                                    if is_correct:
-                                        break
 
-                                match_type = 'exact' if is_correct else 'wrong'
+                                        # 模糊匹配
+                                        if not is_correct and _fuzzy_match(expected_name, std_name):
+                                            is_correct = True
+                                            match_method = 'fuzzy'
+                                            actual_code_used = str(std_item.get('code', '')).strip()
+                                            actual_name_used = std_name
+
+                                    if is_correct and match_method == 'exact':
+                                        break  # 完全匹配优先，停止查找
+
+                                match_type = match_method if is_correct else 'wrong'
 
                                 if is_correct:
                                     results['correct'] += 1
