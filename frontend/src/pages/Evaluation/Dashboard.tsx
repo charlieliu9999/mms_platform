@@ -1,303 +1,187 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Statistic, Table, Button, Tag, Space, Modal, message, Spin, Progress } from 'antd';
-import { ReloadOutlined, PlayCircleOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
+import { Card, Statistic, Table, Button, Tag, Space, Modal, message, Progress } from 'antd';
+import { ReloadOutlined, PlayCircleOutlined, DeleteOutlined, EyeOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { evaluationAPI, EvalTask } from '../../services/evaluationService';
 
 const EvaluationDashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
   const [tasks, setTasks] = useState<EvalTask[]>([]);
-  const [total, setTotal] = useState(0);
-  const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
+  const [loading, setLoading] = useState<boolean>(false);
 
-  // 加载任务列表
-  const loadTasks = async (page = 1, pageSize = 10) => {
+  const fetchTasks = async () => {
     setLoading(true);
     try {
-      const response = await evaluationAPI.listTasks({
-        limit: pageSize,
-        offset: (page - 1) * pageSize,
-      });
-      setTasks(response.tasks);
-      setTotal(response.total);
-      setPagination({ current: page, pageSize });
-    } catch (error) {
-      message.error('加载任务列表失败');
-      console.error('Load tasks error:', error);
+      const res = await evaluationAPI.listTasks();
+      setTasks(res.tasks || []);
+    } catch {
+      message.error('获取评测任务列表失败');
     } finally {
       setLoading(false);
     }
   };
 
-  // 启动评测
-  const handleStart = async (taskId: number) => {
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  const handleRunTask = async (taskId: number) => {
     try {
+      message.info('开始执行评测任务...');
       await evaluationAPI.startEvaluation(taskId);
-      message.success('评测已启动');
-      // 开始轮询进度
-      pollTaskProgress(taskId);
-    } catch (error: any) {
-      message.error(error.response?.data?.detail || '启动评测失败');
-      console.error('Start evaluation error:', error);
+      message.success('评测任务已提交后台执行');
+      fetchTasks();
+    } catch {
+      message.error('启动评测任务失败');
     }
   };
 
-  // 轮询任务进度
-  const pollTaskProgress = async (taskId: number) => {
-    const timer = setInterval(async () => {
-      try {
-        const task = await evaluationAPI.getTask(taskId);
-
-        // 更新任务列表中的对应项
-        setTasks(prev =>
-          prev.map(t => t.id === taskId ? task : t)
-        );
-
-        // 如果完成或失败，停止轮询
-        if (task.status === 'completed' || task.status === 'failed') {
-          clearInterval(timer);
-          if (task.status === 'completed') {
-            message.success(`任务 ${task.name} 已完成`);
-          } else {
-            message.error(`任务 ${task.name} 执行失败`);
-          }
-        }
-      } catch (error) {
-        clearInterval(timer);
-        console.error('Poll task error:', error);
-      }
-    }, 2000); // 每2秒轮询一次
-
-    // 最多轮询5分钟
-    setTimeout(() => clearInterval(timer), 300000);
-  };
-
-  // 删除任务
-  const handleDelete = (taskId: number, taskName: string) => {
+  const handleDeleteTask = async (taskId: number) => {
     Modal.confirm({
       title: '确认删除',
-      content: `确定要删除任务 "${taskName}" 吗？此操作不可恢复。`,
-      okText: '删除',
-      okType: 'danger',
+      content: '确定要删除该评测任务吗？相关的结果数据也将被删除。',
+      okText: '确认',
       cancelText: '取消',
+      okType: 'danger',
       onOk: async () => {
         try {
           await evaluationAPI.deleteTask(taskId);
-          message.success('任务已删除');
-          loadTasks(pagination.current, pagination.pageSize);
-        } catch (error: any) {
-          message.error(error.response?.data?.detail || '删除失败');
+          message.success('已删除评测任务');
+          fetchTasks();
+        } catch {
+          message.error('删除评测任务失败');
         }
       },
     });
   };
 
-  // 查看详情
-  const handleViewDetails = (taskId: number) => {
-    navigate(`/evaluation/tasks/${taskId}`);
-  };
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter(t => t.status === 'completed').length;
+  const avgAccuracy = tasks.reduce((sum, t) => sum + (t.accuracy || 0), 0) / (completedTasks || 1);
 
-  // 初始加载
-  useEffect(() => {
-    loadTasks();
-  }, []);
-
-  // 状态标签
-  const getStatusTag = (status: string) => {
-    const statusMap: Record<string, { color: string; text: string }> = {
-      pending: { color: 'default', text: '待执行' },
-      running: { color: 'processing', text: '执行中' },
-      completed: { color: 'success', text: '已完成' },
-      failed: { color: 'error', text: '失败' },
-    };
-    const config = statusMap[status] || { color: 'default', text: status };
-    return <Tag color={config.color}>{config.text}</Tag>;
-  };
-
-  // 表格列定义
   const columns = [
-    {
-      title: 'ID',
-      dataIndex: 'id',
-      key: 'id',
-      width: 60,
-    },
     {
       title: '任务名称',
       dataIndex: 'name',
       key: 'name',
-      ellipsis: true,
+      render: (text: string, record: EvalTask) => (
+        <div>
+          <a
+            onClick={() => navigate(`/evaluation/tasks/${record.id}`)}
+            className="font-bold hover:underline text-xs text-brand-color"
+          >
+            {text}
+          </a>
+          <div className="text-[11px] mt-0.5 text-text-secondary">{record.description || '无描述'}</div>
+        </div>
+      ),
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
-      render: (status: string, record: EvalTask) => (
-        <Space direction="vertical" size="small">
-          {getStatusTag(status)}
-          {status === 'running' && (
-            <Progress percent={record.progress} size="small" />
-          )}
-        </Space>
-      ),
+      render: (status: string) => {
+        const colorMap: Record<string, string> = {
+          pending: 'default',
+          running: 'processing',
+          completed: 'success',
+          failed: 'error',
+        };
+        return <Tag color={colorMap[status] || 'default'} className="m-0 font-bold">{status}</Tag>;
+      },
     },
     {
-      title: '测试数量',
-      dataIndex: 'total_count',
-      key: 'total_count',
-      width: 100,
-      render: (count: number) => count || '-',
-    },
-    {
-      title: '匹配率',
-      dataIndex: 'match_rate',
-      key: 'match_rate',
-      width: 100,
-      render: (rate: number | undefined) =>
-        rate !== undefined ? `${rate.toFixed(2)}%` : '-',
-    },
-    {
-      title: '准确率',
+      title: '准确率 (Accuracy)',
       dataIndex: 'accuracy',
       key: 'accuracy',
-      width: 100,
-      render: (accuracy: number | undefined) =>
-        accuracy !== undefined ? `${accuracy.toFixed(2)}%` : '-',
+      render: (val: number | null, record: EvalTask) => {
+        if (record.status !== 'completed' || val === null) return <span className="text-xs text-text-secondary">-</span>;
+        const pct = Math.round(val * 100);
+        return (
+          <div className="flex items-center gap-2 w-32">
+            <Progress percent={pct} size="small" strokeColor={pct >= 80 ? '#10b981' : '#f59e0b'} />
+          </div>
+        );
+      },
     },
     {
-      title: 'F1分数',
-      dataIndex: 'f1_score',
-      key: 'f1_score',
-      width: 100,
-      render: (f1: number | undefined) =>
-        f1 !== undefined ? f1.toFixed(2) : '-',
+      title: '样本数',
+      dataIndex: 'total_samples',
+      key: 'total_samples',
+      render: (val: number) => <span className="font-mono text-xs text-text-secondary">{val || 0}</span>,
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 180,
-      render: (time: string) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+      render: (val: string) => <span className="text-xs text-text-secondary">{val ? new Date(val).toLocaleDateString() : '-'}</span>,
     },
     {
       title: '操作',
-      key: 'actions',
-      width: 200,
+      key: 'action',
       render: (_: any, record: EvalTask) => (
-        <Space>
-          {record.status === 'pending' && (
-            <Button
-              type="primary"
-              size="small"
-              icon={<PlayCircleOutlined />}
-              onClick={() => handleStart(record.id)}
-            >
-              启动
-            </Button>
-          )}
-          {record.status === 'completed' && (
-            <Button
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={() => handleViewDetails(record.id)}
-            >
-              详情
-            </Button>
-          )}
-          {(record.status === 'completed' || record.status === 'failed') && (
-            <Button
-              danger
-              size="small"
-              icon={<DeleteOutlined />}
-              onClick={() => handleDelete(record.id, record.name)}
-            >
-              删除
-            </Button>
-          )}
+        <Space size="small">
+          <Button
+            type="text"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => navigate(`/evaluation/tasks/${record.id}`)}
+          >
+            详情
+          </Button>
+          <Button
+            type="text"
+            size="small"
+            icon={<PlayCircleOutlined className="text-brand-color" />}
+            onClick={() => handleRunTask(record.id)}
+            disabled={record.status === 'running'}
+          >
+            运行
+          </Button>
+          <Button
+            type="text"
+            danger
+            size="small"
+            icon={<DeleteOutlined />}
+            onClick={() => handleDeleteTask(record.id)}
+          />
         </Space>
       ),
     },
   ];
 
-  // 计算总览统计
-  const stats = {
-    total: total,
-    completed: tasks.filter(t => t.status === 'completed').length,
-    running: tasks.filter(t => t.status === 'running').length,
-    pending: tasks.filter(t => t.status === 'pending').length,
-  };
-
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-2">评测系统</h1>
-        <p className="text-gray-600 dark:text-gray-300">批量测试匹配引擎性能，分析失败原因，优化词表</p>
+    <div className="space-y-5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b pb-3 gap-3 border-border-theme">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight flex items-center gap-2 m-0 text-text-primary">
+            <ExperimentOutlined className="text-brand-color" />
+            医学匹配规则批量评测系统
+          </h2>
+          <p className="text-xs mt-1 m-0 text-text-secondary">创建自动化回归评测任务，针对黄金标注集测试标准化引擎的命中率与准确率</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button type="primary" onClick={() => navigate('/evaluation/create')} size="small">
+            + 创建新评测任务
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={fetchTasks} size="small" />
+        </div>
       </div>
 
-      {/* 统计卡片 */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <Card>
-          <Statistic title="总任务数" value={stats.total} />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
+          <Statistic title={<span className="text-xs font-semibold text-text-secondary">总评测任务数</span>} value={totalTasks} />
         </Card>
-        <Card>
-          <Statistic
-            title="已完成"
-            value={stats.completed}
-            valueStyle={{ color: '#3f8600' }}
-          />
+        <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
+          <Statistic title={<span className="text-xs font-semibold text-text-secondary">已完成评测任务</span>} value={completedTasks} valueStyle={{ color: '#10b981' }} />
         </Card>
-        <Card>
-          <Statistic
-            title="执行中"
-            value={stats.running}
-            valueStyle={{ color: '#1890ff' }}
-          />
-        </Card>
-        <Card>
-          <Statistic
-            title="待执行"
-            value={stats.pending}
-            valueStyle={{ color: '#999' }}
-          />
+        <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
+          <Statistic title={<span className="text-xs font-semibold text-text-secondary font-mono">平均准确率</span>} value={Math.round(avgAccuracy * 100)} suffix="%" valueStyle={{ color: 'var(--brand-color)' }} />
         </Card>
       </div>
 
-      {/* 任务列表 */}
-      <Card
-        title="评测任务"
-        extra={
-          <Space>
-            <Button
-              type="primary"
-              onClick={() => navigate('/evaluation/create')}
-            >
-              创建任务
-            </Button>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={() => loadTasks(pagination.current, pagination.pageSize)}
-            >
-              刷新
-            </Button>
-          </Space>
-        }
-      >
-        <Table
-          columns={columns}
-          dataSource={tasks}
-          rowKey="id"
-          loading={loading}
-          pagination={{
-            current: pagination.current,
-            pageSize: pagination.pageSize,
-            total: total,
-            showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 条`,
-            onChange: (page, pageSize) => loadTasks(page, pageSize),
-          }}
-        />
+      <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
+        <Table rowKey="id" columns={columns} dataSource={tasks} loading={loading} />
       </Card>
     </div>
   );

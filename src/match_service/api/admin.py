@@ -608,27 +608,27 @@ async def get_standard_items(
     """标准项目查询（分页+多维筛选+版本筛选）"""
     offset = (page - 1) * page_size
 
-    # 构建查询条件
+    # 构建查询条件（映射前端字段名到数据库字段名）
     where_clauses = ["1=1"]
     params = {}
 
     if modality:
-        where_clauses.append("modality = :modality")
+        where_clauses.append("modality_name = :modality")
         params["modality"] = modality
     if body_part_l1:
-        where_clauses.append("body_part_l1 = :body_part_l1")
+        where_clauses.append("scope_name = :body_part_l1")
         params["body_part_l1"] = body_part_l1
     if body_part_l2:
-        where_clauses.append("body_part_l2 = :body_part_l2")
+        where_clauses.append("three_level_name = :body_part_l2")
         params["body_part_l2"] = body_part_l2
     if body_part_l3:
-        where_clauses.append("body_part_l3 = :body_part_l3")
-        params["body_part_l3"] = body_part_l3
+        # 数据库没有三级部位字段，忽略
+        pass
     if version:
         where_clauses.append("version = :version")
         params["version"] = version
     if search:
-        where_clauses.append("(item_name ILIKE :search OR item_code ILIKE :search)")
+        where_clauses.append("(checkitem_name ILIKE :search OR checkitem_code ILIKE :search)")
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(where_clauses)
@@ -642,15 +642,30 @@ async def get_standard_items(
     params["offset"] = offset
     params["limit"] = page_size
     data_sql = f"""
-        SELECT id, item_code, item_name, modality, body_part_l1, body_part_l2, body_part_l3,
-               scan_method, post_processing, version, created_at
+        SELECT id, checkitem_code, checkitem_name, modality_name, scope_name, three_level_name,
+               scan_name, post_processing_name, version
         FROM nlp_checkitem_standard
         WHERE {where_sql}
         ORDER BY id
         LIMIT :limit OFFSET :offset
     """
     result = await session.execute(text(data_sql), params)
-    items = [dict(row._mapping) for row in result]
+    # 映射到前端期望的字段名
+    items = []
+    for row in result:
+        row_dict = dict(row._mapping)
+        items.append({
+            "id": row_dict.get("id"),
+            "item_code": row_dict.get("checkitem_code"),
+            "item_name": row_dict.get("checkitem_name"),
+            "modality": row_dict.get("modality_name"),
+            "body_part_l1": row_dict.get("scope_name"),
+            "body_part_l2": row_dict.get("three_level_name"),
+            "body_part_l3": "",
+            "scan_method": row_dict.get("scan_name"),
+            "post_processing": row_dict.get("post_processing_name"),
+            "version": row_dict.get("version"),
+        })
 
     return {"data": items, "total": total, "page": page, "page_size": page_size}
 
@@ -674,8 +689,8 @@ async def get_standard_item_stats(
     stats_sql = f"""
         SELECT
             COUNT(*) as total,
-            COUNT(DISTINCT modality) as modality_count,
-            COUNT(DISTINCT body_part_l1) as body_part_count
+            COUNT(DISTINCT modality_name) as modality_count,
+            COUNT(DISTINCT scope_name) as body_part_count
         FROM nlp_checkitem_standard WHERE {where_sql}
     """
     result = await session.execute(text(stats_sql), params)
@@ -683,9 +698,9 @@ async def get_standard_item_stats(
 
     # 各模态分布
     modality_sql = f"""
-        SELECT modality, COUNT(*) as count
+        SELECT modality_name as modality, COUNT(*) as count
         FROM nlp_checkitem_standard WHERE {where_sql}
-        GROUP BY modality ORDER BY count DESC
+        GROUP BY modality_name ORDER BY count DESC
     """
     result = await session.execute(text(modality_sql), params)
     modality_distribution = [dict(row._mapping) for row in result]
@@ -693,9 +708,9 @@ async def get_standard_item_stats(
 
     # 一级部位分布 Top 10
     body_sql = f"""
-        SELECT body_part_l1, COUNT(*) as count
-        FROM nlp_checkitem_standard WHERE {where_sql} AND body_part_l1 IS NOT NULL
-        GROUP BY body_part_l1 ORDER BY count DESC LIMIT 10
+        SELECT scope_name as body_part_l1, COUNT(*) as count
+        FROM nlp_checkitem_standard WHERE {where_sql} AND scope_name IS NOT NULL
+        GROUP BY scope_name ORDER BY count DESC LIMIT 10
     """
     body_res = await session.execute(text(body_sql), params)
     by_body_part = {row[0]: row[1] for row in body_res}

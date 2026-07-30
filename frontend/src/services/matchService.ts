@@ -14,7 +14,22 @@ export interface MatchResult {
   reason?: string;
 }
 
+export interface StandardItem {
+  id: number;
+  item_code: string;
+  item_name: string;
+  modality: string;
+  body_part_l1?: string;
+  body_part_l2?: string;
+  body_part_l3?: string;
+  scan_method?: string;
+  post_processing?: string;
+  version?: string;
+  created_at?: string;
+}
+
 export interface MedicalDictItem {
+
   id: number;
   word: string;
   type: string;

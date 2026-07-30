@@ -82,13 +82,13 @@ export default function LexiconMgmt() {
   return (
     <div className="flex flex-col h-full space-y-4">
       {/* 顶部 Header + 跨表 Omni-Search */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3 gap-3">
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b pb-3 gap-3 border-border-theme">
         <div>
-          <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 tracking-tight m-0 flex items-center gap-2">
-            <BookOutlined className="text-blue-600 dark:text-blue-400" />
+          <h2 className="text-xl font-bold tracking-tight m-0 flex items-center gap-2 text-text-primary">
+            <BookOutlined className="text-brand-color" />
             医学词库与规则治理中心
           </h2>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 m-0">一站式管理分词词库、别名映射、歧义规则与标准字典参考表</p>
+          <p className="text-xs mt-1 m-0 text-text-secondary">一站式管理分词词库、别名映射、歧义规则与标准字典参考表</p>
         </div>
         <LexiconOmniSearch onSelectResult={handleOmniSelect} />
       </div>
@@ -101,24 +101,24 @@ export default function LexiconMgmt() {
       />
 
       {/* 第一层: 3 大主功能区导航 (Main Group Nav) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 p-1 bg-zinc-100/70 dark:bg-zinc-850 rounded-xl">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 p-1 rounded-xl bg-bg-subtle border border-border-theme">
         {MAIN_GROUPS.map((g) => {
           const isActive = mainGroup === g.key;
           return (
             <button
               key={g.key}
               onClick={() => handleMainGroupChange(g.key)}
-              className={`p-3 rounded-lg text-left transition-all duration-150 border select-none ${
+              className={`p-3 rounded-lg text-left transition-all duration-150 border select-none cursor-pointer ${
                 isActive
-                  ? 'bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-400 shadow-xs border-zinc-200/90 dark:border-zinc-700'
-                  : 'bg-transparent text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 border-transparent'
+                  ? 'bg-bg-card text-brand-color shadow-xs border-border-theme'
+                  : 'bg-transparent text-text-secondary hover:bg-bg-base border-transparent'
               }`}
             >
               <div className="flex items-center gap-2 font-bold text-xs">
                 <span className="text-sm">{g.icon}</span>
-                <span>{g.label}</span>
+                <span className={isActive ? 'text-brand-color' : 'text-text-primary'}>{g.label}</span>
               </div>
-              <div className="text-[11px] text-zinc-400 dark:text-zinc-500 font-normal mt-0.5 truncate">{g.desc}</div>
+              <div className="text-[11px] font-normal mt-0.5 truncate text-text-secondary">{g.desc}</div>
             </button>
           );
         })}
@@ -126,16 +126,16 @@ export default function LexiconMgmt() {
 
       {/* 第二层: 当前主功能区下的子子视图 Tabs */}
       {currentGroupObj.subTabs.length > 1 && (
-        <div className="flex items-center gap-1.5 border-b border-zinc-200/80 dark:border-zinc-800 pb-2">
+        <div className="flex items-center gap-1.5 border-b pb-2 border-border-theme">
           {currentGroupObj.subTabs.map((st) => (
             <button
               key={st.key}
               title={st.hint}
               onClick={() => setActiveTable(st.key)}
-              className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-all ${
+              className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-all border cursor-pointer ${
                 activeTable === st.key
-                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800/60'
-                  : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-transparent'
+                  ? 'bg-blue-50 dark:bg-blue-950/60 text-brand-color border-blue-200 dark:border-blue-850'
+                  : 'text-text-secondary hover:bg-bg-subtle border-transparent'
               }`}
             >
               {st.label}

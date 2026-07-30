@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { Layout, Button, Tooltip } from 'antd';
+import { Layout, ConfigProvider, theme } from 'antd';
 import { SunOutlined, MoonOutlined, CheckCircleFilled } from '@ant-design/icons';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -16,8 +16,7 @@ const { Header, Content } = Layout;
 
 const App: React.FC = () => {
   const [darkMode, setDarkMode] = useState<boolean>(() => {
-    return localStorage.getItem('theme') === 'dark' ||
-      (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    return localStorage.getItem('theme') === 'dark';
   });
 
   useEffect(() => {
@@ -35,64 +34,97 @@ const App: React.FC = () => {
   };
 
   return (
-    <BrowserRouter>
-      <Layout className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans transition-colors duration-200">
-        <Sidebar />
-        <Layout className="bg-transparent flex flex-col min-h-screen">
-          <Header className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md px-6 border-b border-zinc-200/80 dark:border-zinc-800 flex items-center justify-between sticky top-0 z-10 shadow-xs h-16">
-            <div className="flex items-center gap-3">
-              <h1 className="text-base font-bold text-zinc-900 dark:text-zinc-100 m-0 tracking-tight">
-                MMS 标准化匹配服务管理平台
-              </h1>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50">
-                <CheckCircleFilled className="text-emerald-500 text-[10px]" />
-                引擎就绪
-              </span>
-            </div>
+    <ConfigProvider
+      theme={{
+        algorithm: darkMode ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        token: {
+          colorPrimary: '#2563eb',
+          colorBgLayout: 'var(--bg-base)',
+          colorBgContainer: 'var(--bg-card)',
+          colorBorderSecondary: 'var(--border-theme)',
+          colorText: 'var(--text-primary)',
+          colorTextDescription: 'var(--text-secondary)',
+          borderRadius: 8,
+          fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+        },
+      }}
+    >
+      <BrowserRouter>
+        <Layout className="min-h-screen font-sans transition-colors duration-200 bg-bg-base text-text-primary">
+          <Sidebar />
+          <Layout className="bg-transparent flex flex-col min-h-screen">
+            {/* Header 顶部导航栏 */}
+            <Header className="px-6 border-b flex items-center justify-between sticky top-0 z-10 shadow-xs h-16 transition-colors duration-200 bg-bg-card border-border-theme">
+              <div className="flex items-center gap-3">
+                <h1 className="text-base font-extrabold m-0 tracking-tight text-text-primary">
+                  MMS 标准化匹配服务管理平台
+                </h1>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                  darkMode ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/50' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                }`}>
+                  <CheckCircleFilled className="text-emerald-500 text-[10px]" />
+                  引擎就绪
+                </span>
+              </div>
 
-            <div className="flex items-center gap-3">
-              <Tooltip title={darkMode ? '切换为浅色模式' : '切换为深色模式'}>
-                <Button
-                  type="text"
-                  shape="circle"
-                  icon={darkMode ? <SunOutlined className="text-amber-400 text-lg" /> : <MoonOutlined className="text-zinc-600 text-lg" />}
+              {/* 明暗模式一键 Toggle 按键 */}
+              <div className="flex items-center gap-3 select-none">
+                <button
                   onClick={toggleDarkMode}
-                  className="hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-700"
-                />
-              </Tooltip>
-            </div>
-          </Header>
-          <Content className="m-5 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 p-6 shadow-xs flex-1 flex flex-col overflow-auto">
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/match" element={<MatchTest />} />
-              <Route path="/lexicon" element={<LexiconMgmt />} />
-              <Route path="/standard-items" element={<StandardItems />} />
-              <Route path="/check-standard-items" element={<StandardItems />} />
-              <Route path="/unmatched" element={<UnmatchedWorkbench />} />
-              <Route path="/evaluation" element={<EvaluationDashboard />} />
-              <Route path="/evaluation/create" element={<CreateTask />} />
-              <Route path="/evaluation/tasks/:taskId" element={<TaskDetail />} />
+                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 border cursor-pointer ${
+                    darkMode
+                      ? 'bg-zinc-800 text-amber-300 border-zinc-700 hover:bg-zinc-700 shadow-sm'
+                      : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 shadow-xs'
+                  }`}
+                  title={darkMode ? '切换为浅色商务模式' : '切换为深色夜间模式'}
+                >
+                  {darkMode ? (
+                    <>
+                      <MoonOutlined className="text-amber-400 text-sm" />
+                      <span>深色模式</span>
+                    </>
+                  ) : (
+                    <>
+                      <SunOutlined className="text-amber-500 text-sm" />
+                      <span>浅色模式</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </Header>
 
-              <Route path="/agent" element={
-                <div className="text-center py-24 space-y-2">
-                  <h3 className="text-lg font-medium text-zinc-700 dark:text-zinc-300">AI 智能分析助手</h3>
-                  <p className="text-sm text-zinc-400 dark:text-zinc-500">此模块正在打磨中，敬请期待规则优化建议与智能歧义诊断能力</p>
-                </div>
-              } />
-              <Route path="/history" element={
-                <div className="text-center py-24 space-y-2">
-                  <h3 className="text-lg font-medium text-zinc-700 dark:text-zinc-300">版本变更日志</h3>
-                  <p className="text-sm text-zinc-400 dark:text-zinc-500">规则引擎历史快照与词库版本追溯面板开发中</p>
-                </div>
-              } />
-            </Routes>
-          </Content>
+            {/* Content 主内容容器 */}
+            <Content className="m-5 rounded-2xl border p-6 shadow-xs flex-1 flex flex-col overflow-auto transition-colors duration-200 bg-bg-card border-border-theme">
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/match" element={<MatchTest />} />
+                <Route path="/lexicon" element={<LexiconMgmt />} />
+                <Route path="/standard-items" element={<StandardItems />} />
+                <Route path="/check-standard-items" element={<StandardItems />} />
+                <Route path="/unmatched" element={<UnmatchedWorkbench />} />
+                <Route path="/evaluation" element={<EvaluationDashboard />} />
+                <Route path="/evaluation/create" element={<CreateTask />} />
+                <Route path="/evaluation/tasks/:taskId" element={<TaskDetail />} />
+
+                <Route path="/agent" element={
+                  <div className="text-center py-24 space-y-2">
+                    <h3 className="text-lg font-medium text-text-secondary">AI 智能分析助手</h3>
+                    <p className="text-sm text-text-secondary">此模块正在打磨中，敬请期待规则优化建议与智能歧义诊断能力</p>
+                  </div>
+                } />
+                <Route path="/history" element={
+                  <div className="text-center py-24 space-y-2">
+                    <h3 className="text-lg font-medium text-text-secondary">版本变更日志</h3>
+                    <p className="text-sm text-text-secondary">规则引擎历史快照与词库版本追溯面板开发中</p>
+                  </div>
+                } />
+              </Routes>
+            </Content>
+          </Layout>
         </Layout>
-      </Layout>
-    </BrowserRouter>
+      </BrowserRouter>
+    </ConfigProvider>
   );
 };
 
 export default App;
-

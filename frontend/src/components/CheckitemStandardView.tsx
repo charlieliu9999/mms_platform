@@ -78,27 +78,27 @@ export function CheckitemStandardView({ activeVersion }: Props) {
 
       <div className="flex items-center gap-2 flex-wrap">
         <select value={modality} onChange={(e) => { setModality(e.target.value); setPage(1); }}
-          className="py-1.5 px-2 text-xs rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+          className="py-1.5 px-2 text-xs rounded-md border bg-bg-card border-border-theme text-text-primary">
           {MODALITIES.map((m) => <option key={m || 'all'} value={m}>{m || '全部模态'}</option>)}
         </select>
         <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" />
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-secondary" />
           <input value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput.trim()); setPage(1); } }}
             placeholder="搜索部位/扫描/编码/名称"
-            className="pl-7 pr-2 py-1.5 text-xs rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 w-64" />
+            className="pl-7 pr-2 py-1.5 text-xs rounded-md border bg-bg-card border-border-theme text-text-primary w-64" />
         </div>
         <button onClick={load}
-          className="inline-flex items-center gap-1 py-1.5 px-3 text-xs rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900">
+          className="inline-flex items-center gap-1 py-1.5 px-3 text-xs rounded-md border bg-bg-card border-border-theme text-text-secondary hover:bg-bg-subtle cursor-pointer">
           <RefreshCw className="w-3.5 h-3.5" /> 刷新
         </button>
-        <span className="text-xs text-zinc-400 ml-auto">共 {total} 条 · 版本 {activeVersion || '—'}</span>
+        <span className="text-xs ml-auto text-text-secondary">共 {total} 条 · 版本 {activeVersion || '—'}</span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-border-theme">
         <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400">
+          <thead className="sticky top-0 bg-bg-subtle text-text-secondary">
             <tr>
               <th className="text-left font-medium px-2 py-2 w-14">ID</th>
               {cols.map((c) => (
@@ -108,18 +108,18 @@ export function CheckitemStandardView({ activeVersion }: Props) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={cols.length + 1} className="px-3 py-10 text-center text-zinc-400"><Loader2 className="w-5 h-5 animate-spin inline" /></td></tr>
+              <tr><td colSpan={cols.length + 1} className="px-3 py-10 text-center text-text-secondary"><Loader2 className="w-5 h-5 animate-spin inline" /></td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={cols.length + 1} className="px-3 py-10 text-center text-zinc-400">暂无数据</td></tr>
+              <tr><td colSpan={cols.length + 1} className="px-3 py-10 text-center text-text-secondary">暂无数据</td></tr>
             ) : rows.map((r) => (
-              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800/60 hover:bg-zinc-50/60 dark:hover:bg-zinc-900/40">
-                <td className="px-2 py-1.5 text-zinc-400">{r.id}</td>
+              <tr key={r.id} className="border-t border-border-theme hover:bg-bg-subtle/50">
+                <td className="px-2 py-1.5 text-text-secondary">{r.id}</td>
                 {cols.map((c) => (
                   <td key={String(c.key)}
-                    className={`px-2 py-1.5 max-w-xs truncate ${c.className ?? 'text-zinc-700 dark:text-zinc-300'}`}
+                    className={`px-2 py-1.5 max-w-xs truncate ${c.className ?? 'text-text-primary'}`}
                     title={String(r[c.key] ?? '')}>
                     {c.key === 'modality_name' && r.modality_name
-                      ? <span className="px-1.5 py-0.5 text-[10px] rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">{r.modality_name}</span>
+                      ? <span className="px-1.5 py-0.5 text-[10px] rounded bg-bg-subtle text-text-primary">{r.modality_name}</span>
                       : String(r[c.key] ?? '')}
                   </td>
                 ))}
@@ -131,11 +131,12 @@ export function CheckitemStandardView({ activeVersion }: Props) {
 
       <div className="flex items-center justify-end gap-2 text-xs">
         <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
-          className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 disabled:opacity-40">上一页</button>
-        <span className="text-zinc-500">{page} / {totalPages}</span>
+          className="px-2 py-1 rounded border border-border-theme disabled:opacity-40 cursor-pointer text-text-primary">上一页</button>
+        <span className="text-text-secondary">{page} / {totalPages}</span>
         <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}
-          className="px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 disabled:opacity-40">下一页</button>
+          className="px-2 py-1 rounded border border-border-theme disabled:opacity-40 cursor-pointer text-text-primary">下一页</button>
       </div>
     </div>
   );
+
 }

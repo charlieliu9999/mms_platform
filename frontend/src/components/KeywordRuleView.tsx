@@ -111,10 +111,10 @@ export function KeywordRuleView() {
       <div className="flex items-center gap-1 flex-wrap">
         {MODALITIES.map((m) => (
           <button key={m} onClick={() => { setModality(m); setPage(1); }}
-            className={`px-2.5 py-1 text-xs rounded-md border transition ${
+            className={`px-2.5 py-1 text-xs rounded-md border transition cursor-pointer ${
               modality === m
-                ? 'bg-blue-600 text-white border-blue-600'
-                : 'border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900'
+                ? 'bg-brand-color text-white border-brand-color'
+                : 'bg-bg-card border-border-theme text-text-secondary hover:bg-bg-subtle'
             }`}>
             {m}
           </button>
@@ -126,40 +126,40 @@ export function KeywordRuleView() {
         {RULE_TYPES.map((r) => (
           <button key={r.key} onClick={() => { setRuleType(r.key); setPage(1); }}
             title={r.hint}
-            className={`px-2.5 py-1 text-xs rounded-md border transition ${
+            className={`px-2.5 py-1 text-xs rounded-md border transition cursor-pointer ${
               ruleType === r.key
                 ? 'bg-emerald-600 text-white border-emerald-600'
-                : 'border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900'
+                : 'bg-bg-card border-border-theme text-text-secondary hover:bg-bg-subtle'
             }`}>
             {r.label}
           </button>
         ))}
-        <span className="text-[10px] text-zinc-400 ml-2">{ruleHint}</span>
+        <span className="text-[10px] ml-2 text-text-secondary">{ruleHint}</span>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" />
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-secondary" />
           <input value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput.trim()); setPage(1); } }}
             placeholder="搜索关键词/目标值"
-            className="pl-7 pr-2 py-1.5 text-xs rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 w-56" />
+            className="pl-7 pr-2 py-1.5 text-xs rounded-md border bg-bg-card border-border-theme text-text-primary w-56" />
         </div>
         <button onClick={openNew}
-          className="inline-flex items-center gap-1 py-1.5 px-3 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700">
+          className="inline-flex items-center gap-1 py-1.5 px-3 text-xs rounded-md bg-brand-color text-white hover:opacity-90 cursor-pointer">
           <Plus className="w-3.5 h-3.5" /> 新增
         </button>
         <button onClick={load}
-          className="inline-flex items-center gap-1 py-1.5 px-3 text-xs rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900">
+          className="inline-flex items-center gap-1 py-1.5 px-3 text-xs rounded-md border bg-bg-card border-border-theme text-text-secondary hover:bg-bg-subtle cursor-pointer">
           <RefreshCw className="w-3.5 h-3.5" /> 刷新
         </button>
-        <span className="text-xs text-zinc-400 ml-auto">共 {total} 条 · 按 priority 升序</span>
+        <span className="text-xs ml-auto text-text-secondary">共 {total} 条 · 按 priority 升序</span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-border-theme">
         <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400">
+          <thead className="sticky top-0 bg-bg-subtle text-text-secondary">
             <tr>
               <th className="text-left font-medium px-2 py-2 w-14">ID</th>
               <th className="text-left font-medium px-2 py-2 w-16">优先级</th>
@@ -172,13 +172,13 @@ export function KeywordRuleView() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="px-3 py-10 text-center text-zinc-400"><Loader2 className="w-5 h-5 animate-spin inline" /></td></tr>
+              <tr><td colSpan={7} className="px-3 py-10 text-center text-text-secondary"><Loader2 className="w-5 h-5 animate-spin inline" /></td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-10 text-center text-zinc-400">暂无数据</td></tr>
+              <tr><td colSpan={7} className="px-3 py-10 text-center text-text-secondary">暂无数据</td></tr>
             ) : rows.map((r) => (
-              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800/60 hover:bg-zinc-50/60 dark:hover:bg-zinc-900/40">
-                <td className="px-2 py-1.5 text-zinc-400">{r.id}</td>
-                <td className="px-2 py-1.5"><span className="px-1.5 py-0.5 text-[10px] rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500">{r.priority}</span></td>
+              <tr key={r.id} className="border-t border-border-theme hover:bg-bg-subtle/50">
+                <td className="px-2 py-1.5 text-text-secondary">{r.id}</td>
+                <td className="px-2 py-1.5"><span className="px-1.5 py-0.5 text-[10px] rounded bg-bg-subtle text-text-secondary">{r.priority}</span></td>
                 <td className="px-2 py-1.5">
                   <div className="flex flex-wrap gap-1">
                     {r.keywords.split('+').filter(Boolean).map((k, i) => (
@@ -186,16 +186,17 @@ export function KeywordRuleView() {
                     ))}
                   </div>
                 </td>
-                <td className="px-2 py-1.5 font-medium text-zinc-800 dark:text-zinc-100">
+                <td className="px-2 py-1.5 font-medium text-text-primary">
                   {r.dst_value || <span className="text-rose-500 text-[10px]">(不可匹配)</span>}
                 </td>
                 <td className="px-2 py-1.5">
                   {r.enable === 0
                     ? <span className="text-emerald-500">✓</span>
-                    : <span className="text-zinc-300">✕</span>}
+                    : <span className="opacity-40">✕</span>}
                 </td>
-                <td className="px-2 py-1.5 text-zinc-500 max-w-xs truncate" title={r.remark ?? ''}>{r.remark ?? ''}</td>
+                <td className="px-2 py-1.5 text-text-secondary max-w-xs truncate" title={r.remark ?? ''}>{r.remark ?? ''}</td>
                 <td className="px-2 py-1.5">
+
                   <div className="flex items-center gap-1.5">
                     <button onClick={() => openEdit(r)} title="编辑"
                       className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500">

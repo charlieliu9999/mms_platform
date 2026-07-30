@@ -67,7 +67,7 @@ const TaskDetail: React.FC = () => {
 
   if (loading || !task) {
     return (
-      <div className="flex justify-center items-center h-screen">
+      <div className="flex justify-center items-center h-48">
         <Spin size="large" tip="加载中..." />
       </div>
     );
@@ -87,6 +87,7 @@ const TaskDetail: React.FC = () => {
       key: 'check_item',
       ellipsis: true,
       width: 300,
+      render: (text: string) => <span className="font-bold text-text-primary">{text}</span>,
     },
     {
       title: '模态',
@@ -100,8 +101,8 @@ const TaskDetail: React.FC = () => {
       width: 200,
       render: (_: any, record: FailureCase) => (
         <div>
-          <div className="text-xs text-gray-400 dark:text-gray-500">{record.expected_code}</div>
-          <div className="text-gray-900 dark:text-gray-100">{record.expected_name}</div>
+          <div className="text-xs text-text-secondary">{record.expected_code}</div>
+          <div className="text-text-primary font-bold text-xs">{record.expected_name}</div>
         </div>
       ),
     },
@@ -112,11 +113,11 @@ const TaskDetail: React.FC = () => {
       render: (_: any, record: FailureCase) =>
         record.actual_name ? (
           <div>
-            <div className="text-xs text-gray-400 dark:text-gray-500">{record.actual_code}</div>
-            <div className="text-gray-900 dark:text-gray-100">{record.actual_name}</div>
+            <div className="text-xs text-text-secondary">{record.actual_code}</div>
+            <div className="text-text-primary font-bold text-xs">{record.actual_name}</div>
           </div>
         ) : (
-          <span className="text-gray-500 dark:text-gray-400">(未匹配)</span>
+          <span className="text-text-secondary">(未匹配)</span>
         ),
     },
     {
@@ -152,18 +153,19 @@ const TaskDetail: React.FC = () => {
   };
 
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-4">
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b pb-3 gap-3 border-border-theme">
+        <div className="flex items-center gap-3">
           <Button
             icon={<ArrowLeftOutlined />}
             onClick={() => navigate('/evaluation')}
+            size="small"
           >
             返回
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{task.name}</h1>
-            <p className="text-gray-600 dark:text-gray-300">{task.description}</p>
+            <h2 className="text-xl font-bold tracking-tight text-text-primary m-0">{task.name}</h2>
+            <p className="text-xs mt-1 m-0 text-text-secondary">{task.description}</p>
           </div>
         </div>
         <Button
@@ -172,13 +174,14 @@ const TaskDetail: React.FC = () => {
             loadTask();
             loadFailures(failurePagination.current, failurePagination.pageSize);
           }}
+          size="small"
         >
           刷新
         </Button>
       </div>
 
       {/* 任务基本信息 */}
-      <Card title="任务信息" className="mb-6">
+      <Card title="任务信息" bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
         <Descriptions column={3}>
           <Descriptions.Item label="任务ID">{task.id}</Descriptions.Item>
           <Descriptions.Item label="状态">{getStatusTag(task.status)}</Descriptions.Item>
@@ -196,42 +199,43 @@ const TaskDetail: React.FC = () => {
 
       {/* 核心指标 */}
       {task.status === 'completed' && (
-        <Row gutter={16} className="mb-6">
-          <Col span={6}>
-            <Card>
+        <Row gutter={[16, 16]}>
+          <Col xs={12} sm={6}>
+            <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
               <Statistic
                 title="匹配率"
-                value={task.match_rate?.toFixed(2)}
+                value={task.match_rate ? task.match_rate * 100 : 0}
                 suffix="%"
-                valueStyle={{ color: (task.match_rate || 0) >= 85 ? '#3f8600' : '#cf1322' }}
+                valueStyle={{ color: (task.match_rate || 0) >= 0.85 ? '#10b981' : '#f59e0b', fontWeight: 800 }}
               />
             </Card>
           </Col>
-          <Col span={6}>
-            <Card>
+          <Col xs={12} sm={6}>
+            <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
               <Statistic
                 title="准确率"
-                value={task.accuracy?.toFixed(2)}
+                value={task.accuracy ? task.accuracy * 100 : 0}
                 suffix="%"
-                valueStyle={{ color: (task.accuracy || 0) >= 90 ? '#3f8600' : '#cf1322' }}
+                valueStyle={{ color: (task.accuracy || 0) >= 0.90 ? '#10b981' : '#f59e0b', fontWeight: 800 }}
               />
             </Card>
           </Col>
-          <Col span={6}>
-            <Card>
+          <Col xs={12} sm={6}>
+            <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
               <Statistic
                 title="F1分数"
-                value={task.f1_score?.toFixed(2)}
-                valueStyle={{ color: (task.f1_score || 0) >= 80 ? '#3f8600' : '#cf1322' }}
+                value={task.f1_score}
+                valueStyle={{ color: (task.f1_score || 0) >= 0.80 ? '#10b981' : '#f59e0b', fontWeight: 800 }}
               />
             </Card>
           </Col>
-          <Col span={6}>
-            <Card>
+          <Col xs={12} sm={6}>
+            <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
               <Statistic
                 title="平均响应时间"
-                value={task.avg_response_time?.toFixed(2)}
+                value={task.avg_response_time}
                 suffix="ms"
+                valueStyle={{ fontWeight: 800 }}
               />
             </Card>
           </Col>
@@ -239,7 +243,7 @@ const TaskDetail: React.FC = () => {
       )}
 
       {/* 失败案例 */}
-      <Card>
+      <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
         <Tabs defaultActiveKey="cases">
           <TabPane tab={`失败案例 (${failuresTotal})`} key="cases">
             <Table
@@ -257,7 +261,7 @@ const TaskDetail: React.FC = () => {
             />
           </TabPane>
           <TabPane tab="失败原因统计" key="stats">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {Object.entries(failureStats).map(([reason, count]) => {
                 const reasonMap: Record<string, string> = {
                   missing_word: '缺少词汇',
@@ -268,7 +272,7 @@ const TaskDetail: React.FC = () => {
                   wrong_match: '错误匹配',
                 };
                 return (
-                  <Card key={reason}>
+                  <Card key={reason} bordered={false} className="bg-bg-subtle border border-border-theme">
                     <Statistic
                       title={reasonMap[reason] || reason}
                       value={count}

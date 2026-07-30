@@ -61,7 +61,7 @@ class RuleDataLoader:
         """加载同义词/别名映射"""
         result = await conn.execute(text(
             "SELECT id, modality, src_word, dst_word, step, version "
-            "FROM nlp_phrase_map WHERE enable = 0"
+            "FROM nlp_phrase_map WHERE enable = 1"
         ))
         rows = result.fetchall()
         self.alias2std = pd.DataFrame(

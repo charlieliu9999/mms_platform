@@ -71,16 +71,15 @@ const Sidebar: React.FC = () => {
   return (
     <Sider
       width={220}
-      theme="light"
-      className="border-r border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 select-none shadow-xs"
+      className="border-r select-none shadow-xs transition-colors duration-200 bg-bg-card border-border-theme"
     >
-      <div className="px-5 py-5 flex items-center gap-3 border-b border-zinc-100 dark:border-zinc-800/80">
-        <div className="w-8 h-8 rounded-lg bg-blue-600 dark:bg-blue-700 flex items-center justify-center text-white shadow-xs">
+      <div className="px-5 py-5 flex items-center gap-3 border-b border-border-theme">
+        <div className="w-8 h-8 rounded-xl bg-brand-color flex items-center justify-center text-white shadow-xs shrink-0">
           <MedicineBoxOutlined className="text-lg" />
         </div>
-        <div>
-          <h2 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-none m-0">MMS Platform</h2>
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">医学标准化引擎</span>
+        <div className="min-w-0">
+          <h2 className="text-sm font-extrabold leading-none m-0 truncate text-text-primary">MMS Platform</h2>
+          <span className="text-[10px] font-medium block mt-1 text-text-secondary">医学标准化引擎</span>
         </div>
       </div>
       <div className="py-3 px-2">
@@ -89,13 +88,11 @@ const Sidebar: React.FC = () => {
           selectedKeys={[selectedKey]}
           items={menuItems}
           onClick={({ key }) => navigate(key)}
-          className="border-r-0 font-medium text-sm text-zinc-600 dark:text-zinc-400 space-y-1"
+          className="border-r-0 font-semibold text-xs space-y-1 bg-transparent"
         />
       </div>
     </Sider>
   );
-
 };
 
 export default Sidebar;
-

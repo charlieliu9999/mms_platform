@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { Card, Form, Input, InputNumber, Select, Button, message, Upload } from 'antd';
-import { UploadOutlined } from '@ant-design/icons';
+import { Card, Form, Input, InputNumber, Select, Button, message } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { evaluationAPI } from '../../services/evaluationService';
 
@@ -15,7 +14,7 @@ const CreateTask: React.FC = () => {
   const handleSubmit = async (values: any) => {
     setLoading(true);
     try {
-      const task = await evaluationAPI.createTask({
+      await evaluationAPI.createTask({
         name: values.name,
         description: values.description,
         test_file_path: values.test_file_path,
@@ -35,13 +34,13 @@ const CreateTask: React.FC = () => {
   };
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-2">创建评测任务</h1>
-        <p className="text-gray-600 dark:text-gray-300">配置测试参数并创建新的评测任务</p>
+    <div className="space-y-6">
+      <div className="border-b pb-3 border-border-theme">
+        <h2 className="text-xl font-bold tracking-tight text-text-primary m-0">创建评测任务</h2>
+        <p className="text-xs mt-1 m-0 text-text-secondary">配置测试参数并创建新的自动化规则评测任务</p>
       </div>
 
-      <Card>
+      <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
         <Form
           form={form}
           layout="vertical"
@@ -52,14 +51,14 @@ const CreateTask: React.FC = () => {
           }}
         >
           <Form.Item
-            label="任务名称"
+            label={<span className="text-xs font-semibold text-text-primary">任务名称</span>}
             name="name"
             rules={[{ required: true, message: '请输入任务名称' }]}
           >
             <Input placeholder="例如：CT项目匹配测试" />
           </Form.Item>
 
-          <Form.Item label="任务描述" name="description">
+          <Form.Item label={<span className="text-xs font-semibold text-text-primary">任务描述</span>} name="description">
             <TextArea
               rows={3}
               placeholder="描述本次评测的目的和范围"
@@ -67,18 +66,18 @@ const CreateTask: React.FC = () => {
           </Form.Item>
 
           <Form.Item
-            label="测试文件路径"
+            label={<span className="text-xs font-semibold text-text-primary">测试文件路径</span>}
             name="test_file_path"
             rules={[{ required: true, message: '请输入测试文件路径' }]}
-            extra="CSV 格式，包含 check_item, modality, expected_standard_code, expected_standard_name 列"
+            extra={<span className="text-[11px] text-text-secondary">CSV 格式，包含 check_item, modality, expected_standard_code, expected_standard_name 列</span>}
           >
             <Input placeholder="tests/benchmark/16zzy_ct_115k.csv" />
           </Form.Item>
 
           <Form.Item
-            label="采样数量"
+            label={<span className="text-xs font-semibold text-text-primary">采样数量</span>}
             name="sample_size"
-            extra="留空则使用全部数据"
+            extra={<span className="text-[11px] text-text-secondary">留空则使用全部数据</span>}
           >
             <InputNumber
               min={1}
@@ -89,9 +88,9 @@ const CreateTask: React.FC = () => {
           </Form.Item>
 
           <Form.Item
-            label="模态过滤"
+            label={<span className="text-xs font-semibold text-text-primary">模态过滤</span>}
             name="modality"
-            extra="仅测试指定模态的数据，留空则测试所有模态"
+            extra={<span className="text-[11px] text-text-secondary">仅测试指定模态的数据，留空则测试所有模态</span>}
           >
             <Select placeholder="选择模态" allowClear>
               <Option value="CT">CT</Option>
@@ -103,13 +102,13 @@ const CreateTask: React.FC = () => {
             </Select>
           </Form.Item>
 
-          <Form.Item label="创建人" name="created_by">
+          <Form.Item label={<span className="text-xs font-semibold text-text-primary">创建人</span>} name="created_by">
             <Input placeholder="你的名字" />
           </Form.Item>
 
-          <Form.Item>
-            <div className="flex gap-4">
-              <Button type="primary" htmlType="submit" loading={loading}>
+          <Form.Item className="mb-0 pt-2">
+            <div className="flex gap-3">
+              <Button type="primary" htmlType="submit" loading={loading} className="font-bold">
                 创建任务
               </Button>
               <Button onClick={() => navigate('/evaluation')}>

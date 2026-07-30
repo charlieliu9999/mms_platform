@@ -135,17 +135,17 @@ export function PhraseMapView({ activeVersion }: Props) {
   return (
     <div className="flex flex-col h-full space-y-3">
       {/* 步骤 Phase Chips 过滤 */}
-      <div className="flex items-center justify-between gap-2 flex-wrap bg-zinc-50 dark:bg-zinc-800/40 p-2 rounded-xl border border-zinc-200/60 dark:border-zinc-800">
+      <div className="flex items-center justify-between gap-2 flex-wrap p-2 rounded-xl border bg-bg-subtle border-border-theme">
         <div className="flex items-center gap-1.5 flex-wrap">
           {STEPS.map((s) => (
             <button
               key={s.key}
               title={s.hint}
               onClick={() => { setStep(s.key); setPage(1); }}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border cursor-pointer ${
                 step === s.key
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700'
+                  ? 'bg-brand-color text-white border-brand-color shadow-xs'
+                  : 'bg-bg-card text-text-secondary hover:bg-bg-subtle border-border-theme'
               }`}
             >
               {s.label}
@@ -165,9 +165,9 @@ export function PhraseMapView({ activeVersion }: Props) {
               <Select.Option key={m} value={m}>{m}</Select.Option>
             ))}
           </Select>
-          <span className="text-xs text-zinc-400 font-normal">共 {total} 组</span>
+          <span className="text-xs text-text-secondary font-normal">共 {total} 组</span>
           <Input
-            prefix={<Search className="w-3.5 h-3.5 text-zinc-400" />}
+            prefix={<Search className="w-3.5 h-3.5 text-text-secondary mr-1" />}
             placeholder="搜索别名或目标词..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
@@ -186,34 +186,34 @@ export function PhraseMapView({ activeVersion }: Props) {
       {/* 别名卡片列表 */}
       <div className="flex-1 overflow-y-auto space-y-3 pr-1">
         {loading ? (
-          <div className="py-20 text-center text-zinc-400"><Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />别名映射加载中...</div>
+          <div className="py-20 text-center text-text-secondary"><Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />别名映射加载中...</div>
         ) : groups.length === 0 ? (
-          <div className="py-20 text-center text-zinc-400 text-sm">暂无别名映射条目</div>
+          <div className="py-20 text-center text-text-secondary text-sm">暂无别名映射条目</div>
         ) : (
           groups.map((g, idx) => (
-            <div key={idx} className="p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-xs hover:border-blue-200 dark:hover:border-blue-900 transition-colors">
-              <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-2 mb-3">
+            <div key={idx} className="p-4 rounded-xl border shadow-xs hover:border-brand-color transition-colors bg-bg-card border-border-theme">
+              <div className="flex items-center justify-between border-b pb-2 mb-3 border-border-theme">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-zinc-400">标准词:</span>
+                  <span className="text-xs font-bold text-text-secondary">标准词:</span>
                   <Tag color="blue" className="text-xs font-bold px-2 py-0.5 m-0">{g.dst_word}</Tag>
                   <Tag className="text-[10px] m-0">{g.modality || 'ALL 模态'}</Tag>
-                  <span className="text-[11px] text-zinc-400 font-normal">包含 {g.aliases.length} 个别名词汇</span>
+                  <span className="text-[11px] font-normal text-text-secondary">包含 {g.aliases.length} 个别名词汇</span>
                 </div>
-                <Button size="small" type="text" className="text-blue-600 text-xs flex items-center gap-1" onClick={() => openNewForGroup(g)}>
-                  <Plus className="w-3 h-3" /> 添加新别名
+                <Button size="small" type="text" className="text-brand-color text-xs flex items-center gap-1" onClick={() => openNewForGroup(g)}>
+                  <Plus className="w-3.5 h-3.5" /> 添加新别名
                 </Button>
               </div>
 
               {/* 映射 Tag 列表 */}
               <div className="flex items-center gap-2 flex-wrap">
                 {g.aliases.map((a) => (
-                  <div key={a.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs group hover:border-blue-400 transition-colors">
-                    <span className="font-medium text-zinc-800 dark:text-zinc-200">{a.src_word}</span>
+                  <div key={a.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs group hover:border-brand-color transition-colors bg-bg-subtle border-border-theme">
+                    <span className="font-medium text-text-primary">{a.src_word}</span>
                     <ArrowRight className="w-3 h-3 text-blue-500" />
-                    <span className="font-semibold text-blue-600 dark:text-blue-400">{g.dst_word}</span>
+                    <span className="font-semibold text-brand-color">{g.dst_word}</span>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
-                      <Pencil className="w-3 h-3 text-zinc-400 hover:text-blue-600 cursor-pointer" onClick={() => openEditAlias(g, a)} />
-                      <Trash2 className="w-3 h-3 text-zinc-400 hover:text-red-600 cursor-pointer" onClick={() => handleDeleteAlias(a.id)} />
+                      <Pencil className="w-3 h-3 text-text-secondary hover:text-brand-color cursor-pointer" onClick={() => openEditAlias(g, a)} />
+                      <Trash2 className="w-3 h-3 text-text-secondary hover:text-red-500 cursor-pointer" onClick={() => handleDeleteAlias(a.id)} />
                     </div>
                   </div>
                 ))}
@@ -222,6 +222,7 @@ export function PhraseMapView({ activeVersion }: Props) {
           ))
         )}
       </div>
+
 
       {/* 右侧 Drawer 快捷编辑 */}
       <Drawer
