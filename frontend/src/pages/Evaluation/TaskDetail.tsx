@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Descriptions, Table, Tag, Tabs, Statistic, Row, Col, Button, message, Spin } from 'antd';
-import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Descriptions, Table, Tag, Tabs, Statistic, Row, Col, Button, message, Spin, Select, Input } from 'antd';
+import { ArrowLeftOutlined, ReloadOutlined, FilterOutlined, ClearOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { evaluationAPI, EvalTask, FailureCase } from '../../services/evaluationService';
 
@@ -15,6 +15,13 @@ const TaskDetail: React.FC = () => {
   const [failureStats, setFailureStats] = useState<Record<string, number>>({});
   const [failuresTotal, setFailuresTotal] = useState(0);
   const [failurePagination, setFailurePagination] = useState({ current: 1, pageSize: 20 });
+
+  // 筛选器状态
+  const [filters, setFilters] = useState({
+    failure_reason: undefined as string | undefined,
+    modality: undefined as string | undefined,
+    search: '' as string,
+  });
 
   // 加载任务详情
   const loadTask = async () => {
@@ -38,8 +45,26 @@ const TaskDetail: React.FC = () => {
       const response = await evaluationAPI.getFailures(Number(taskId), {
         limit: pageSize,
         offset: (page - 1) * pageSize,
+        failure_reason: filters.failure_reason,
       });
-      setFailures(response.cases);
+
+      // 在前端进行额外筛选（模态和搜索）
+      let filteredCases = response.cases;
+
+      if (filters.modality) {
+        filteredCases = filteredCases.filter(c => c.modality === filters.modality);
+      }
+
+      if (filters.search.trim()) {
+        const searchLower = filters.search.toLowerCase();
+        filteredCases = filteredCases.filter(c =>
+          c.check_item?.toLowerCase().includes(searchLower) ||
+          c.expected_name?.toLowerCase().includes(searchLower) ||
+          c.actual_name?.toLowerCase().includes(searchLower)
+        );
+      }
+
+      setFailures(filteredCases);
       setFailuresTotal(response.total);
       setFailurePagination({ current: page, pageSize });
     } catch (error) {
@@ -64,6 +89,13 @@ const TaskDetail: React.FC = () => {
     loadFailures();
     loadFailureStats();
   }, [taskId]);
+
+  // 监听筛选条件变化
+  useEffect(() => {
+    if (taskId) {
+      loadFailures(1, failurePagination.pageSize);
+    }
+  }, [filters]);
 
   if (loading || !task) {
     return (
@@ -246,6 +278,73 @@ const TaskDetail: React.FC = () => {
       <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
         <Tabs defaultActiveKey="cases">
           <TabPane tab={`失败案例 (${failuresTotal})`} key="cases">
+            {/* 筛选器 */}
+            <div className="mb-4 p-3 rounded-lg bg-bg-subtle border border-border-theme">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <FilterOutlined className="text-text-secondary" />
+                  <span className="text-xs font-semibold text-text-secondary">筛选条件：</span>
+                </div>
+
+                <Select
+                  placeholder="失败原因"
+                  allowClear
+                  className="w-32 text-xs"
+                  size="small"
+                  value={filters.failure_reason}
+                  onChange={(value) => setFilters({ ...filters, failure_reason: value })}
+                >
+                  <Select.Option value="missing_word">缺少词汇</Select.Option>
+                  <Select.Option value="ambiguity">存在歧义</Select.Option>
+                  <Select.Option value="complex">复杂表述</Select.Option>
+                  <Select.Option value="algorithm">算法问题</Select.Option>
+                  <Select.Option value="no_standard">无标准项</Select.Option>
+                  <Select.Option value="wrong_match">错误匹配</Select.Option>
+                </Select>
+
+                <Select
+                  placeholder="模态"
+                  allowClear
+                  className="w-24 text-xs"
+                  size="small"
+                  value={filters.modality}
+                  onChange={(value) => setFilters({ ...filters, modality: value })}
+                >
+                  <Select.Option value="CT">CT</Select.Option>
+                  <Select.Option value="MR">MR</Select.Option>
+                  <Select.Option value="DR">DR</Select.Option>
+                  <Select.Option value="US">US</Select.Option>
+                  <Select.Option value="DSA">DSA</Select.Option>
+                  <Select.Option value="PET">PET</Select.Option>
+                  <Select.Option value="SPECT">SPECT</Select.Option>
+                </Select>
+
+                <Input
+                  placeholder="搜索项目名称..."
+                  allowClear
+                  className="w-48 text-xs"
+                  size="small"
+                  value={filters.search}
+                  onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                />
+
+                <Button
+                  size="small"
+                  icon={<ClearOutlined />}
+                  onClick={() => {
+                    setFilters({ failure_reason: undefined, modality: undefined, search: '' });
+                  }}
+                  className="text-xs"
+                >
+                  清空筛选
+                </Button>
+
+                <span className="ml-auto text-xs text-text-secondary">
+                  显示 {failures.length} / {failuresTotal} 条
+                </span>
+              </div>
+            </div>
+
             <Table
               columns={failureColumns}
               dataSource={failures}
