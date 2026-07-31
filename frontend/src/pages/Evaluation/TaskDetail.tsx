@@ -236,9 +236,9 @@ const TaskDetail: React.FC = () => {
             <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
               <Statistic
                 title="匹配率"
-                value={task.match_rate ? task.match_rate * 100 : 0}
+                value={task.match_rate || 0}
                 suffix="%"
-                valueStyle={{ color: (task.match_rate || 0) >= 0.85 ? '#10b981' : '#f59e0b', fontWeight: 800 }}
+                valueStyle={{ color: (task.match_rate || 0) >= 85 ? '#10b981' : '#f59e0b', fontWeight: 800 }}
               />
             </Card>
           </Col>
@@ -246,9 +246,9 @@ const TaskDetail: React.FC = () => {
             <Card bordered={false} className="shadow-xs rounded-xl bg-bg-card border-border-theme">
               <Statistic
                 title="准确率"
-                value={task.accuracy ? task.accuracy * 100 : 0}
+                value={task.accuracy || 0}
                 suffix="%"
-                valueStyle={{ color: (task.accuracy || 0) >= 0.90 ? '#10b981' : '#f59e0b', fontWeight: 800 }}
+                valueStyle={{ color: (task.accuracy || 0) >= 90 ? '#10b981' : '#f59e0b', fontWeight: 800 }}
               />
             </Card>
           </Col>
