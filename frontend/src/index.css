@@ -231,6 +231,13 @@
   color: var(--brand-color) !important;
 }
 
+/* Tag 标签样式修复 */
+.ant-tag {
+  background-color: var(--bg-subtle) !important;
+  border-color: var(--border-theme) !important;
+  color: var(--text-primary) !important;
+}
+
 /* 自定义滚动条 */
 ::-webkit-scrollbar {
   width: 6px;

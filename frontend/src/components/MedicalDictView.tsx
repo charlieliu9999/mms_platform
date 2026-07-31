@@ -161,7 +161,10 @@ export function MedicalDictView() {
               >
                 <div className="min-w-0 pr-1">
                   <div className="text-xs font-bold truncate text-text-primary">{row.word}</div>
-                  <Tag className="text-[9px] m-0 px-1 py-0 border-0 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400">
+                  <Tag className="text-[9px] m-0 px-1 py-0 border-0" style={{
+                    backgroundColor: 'var(--bg-subtle)',
+                    color: 'var(--text-secondary)'
+                  }}>
                     {row.type}
                   </Tag>
                 </div>
