@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session_factory
@@ -301,6 +301,92 @@ async def get_failure_stats(task_id: int):
     stats = await runner.get_failure_stats(task_id)
 
     return FailureStatsResponse(stats=stats)
+
+
+@router.get("/tasks/{task_id}/analysis")
+async def get_task_analysis(task_id: int):
+    """
+    获取任务的详细分析报告
+
+    - 各模态匹配表现
+    - 高频失败项目
+    - 失败案例分布
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        # 验证任务存在
+        task = await session.get(EvalTask, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+        # 按模态统计性能
+        modality_stats_sql = text("""
+            SELECT
+                modality,
+                COUNT(*) as total,
+                COUNT(CASE WHEN match_status = 'matched' THEN 1 END) as matched,
+                COUNT(CASE WHEN match_status = 'matched' AND actual_code = expected_code THEN 1 END) as correct,
+                COUNT(CASE WHEN match_status = 'no_match' THEN 1 END) as no_match
+            FROM mms_eval_details
+            WHERE task_id = :task_id
+            GROUP BY modality
+            ORDER BY total DESC
+        """)
+
+        result = await session.execute(modality_stats_sql, {'task_id': task_id})
+        modality_stats = []
+
+        for row in result:
+            total = row.total
+            matched = row.matched
+            correct = row.correct
+            no_match = row.no_match
+
+            match_rate = round(matched / total * 100, 2) if total > 0 else 0
+            accuracy = round(correct / matched * 100, 2) if matched > 0 else 0
+
+            modality_stats.append({
+                'modality': row.modality,
+                'total': total,
+                'matched': matched,
+                'correct': correct,
+                'no_match': no_match,
+                'match_rate': match_rate,
+                'accuracy': accuracy,
+            })
+
+        # 高频失败项目
+        freq_failures_sql = text("""
+            SELECT
+                check_item, modality, COUNT(*) as count
+            FROM mms_eval_details
+            WHERE task_id = :task_id AND match_status = 'no_match'
+            GROUP BY check_item, modality
+            HAVING COUNT(*) >= 2
+            ORDER BY count DESC, modality
+            LIMIT 50
+        """)
+
+        result = await session.execute(freq_failures_sql, {'task_id': task_id})
+        freq_failures = [
+            {
+                'check_item': row.check_item,
+                'modality': row.modality,
+                'count': row.count
+            }
+            for row in result
+        ]
+
+        # 失败原因统计（从runner获取）
+        runner = get_runner()
+        failure_stats = await runner.get_failure_stats(task_id)
+
+        return {
+            'task_id': task_id,
+            'modality_performance': modality_stats,
+            'frequent_failures': freq_failures,
+            'failure_reasons': failure_stats,
+        }
 
 
 @router.delete("/tasks/{task_id}")

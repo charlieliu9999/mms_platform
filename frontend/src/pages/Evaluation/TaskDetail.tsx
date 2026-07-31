@@ -16,6 +16,10 @@ const TaskDetail: React.FC = () => {
   const [failuresTotal, setFailuresTotal] = useState(0);
   const [failurePagination, setFailurePagination] = useState({ current: 1, pageSize: 20 });
 
+  // 详细分析数据
+  const [modalityPerformance, setModalityPerformance] = useState<any[]>([]);
+  const [frequentFailures, setFrequentFailures] = useState<any[]>([]);
+
   // 筛选器状态
   const [filters, setFilters] = useState({
     failure_reason: undefined as string | undefined,
@@ -84,10 +88,24 @@ const TaskDetail: React.FC = () => {
     }
   };
 
+  // 加载详细分析数据
+  const loadDetailedAnalysis = async () => {
+    if (!taskId) return;
+    try {
+      const response = await fetch(`http://localhost:9100/api/evaluation/tasks/${taskId}/analysis`);
+      const data = await response.json();
+      setModalityPerformance(data.modality_performance || []);
+      setFrequentFailures(data.frequent_failures || []);
+    } catch (error) {
+      console.error('Load detailed analysis error:', error);
+    }
+  };
+
   useEffect(() => {
     loadTask();
     loadFailures();
     loadFailureStats();
+    loadDetailedAnalysis();
   }, [taskId]);
 
   // 监听筛选条件变化
@@ -380,6 +398,82 @@ const TaskDetail: React.FC = () => {
                   </Card>
                 );
               })}
+            </div>
+          </TabPane>
+          <TabPane tab="详细分析" key="analysis">
+            {/* 各模态匹配表现 */}
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold mb-3 text-text-primary">各模态匹配表现</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-bg-subtle">
+                      <th className="px-3 py-2 text-left border border-border-theme">模态</th>
+                      <th className="px-3 py-2 text-right border border-border-theme">测试总数</th>
+                      <th className="px-3 py-2 text-right border border-border-theme">匹配数</th>
+                      <th className="px-3 py-2 text-right border border-border-theme">正确数</th>
+                      <th className="px-3 py-2 text-right border border-border-theme">未匹配</th>
+                      <th className="px-3 py-2 text-right border border-border-theme">匹配率</th>
+                      <th className="px-3 py-2 text-right border border-border-theme">准确率</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modalityPerformance.map((stat: any) => (
+                      <tr key={stat.modality} className="hover:bg-bg-subtle/50">
+                        <td className="px-3 py-2 border border-border-theme font-semibold">{stat.modality}</td>
+                        <td className="px-3 py-2 text-right border border-border-theme">{stat.total}</td>
+                        <td className="px-3 py-2 text-right border border-border-theme">{stat.matched}</td>
+                        <td className="px-3 py-2 text-right border border-border-theme">{stat.correct}</td>
+                        <td className="px-3 py-2 text-right border border-border-theme text-text-secondary">{stat.no_match}</td>
+                        <td className="px-3 py-2 text-right border border-border-theme">
+                          <span className={stat.match_rate >= 85 ? 'text-green-600 font-semibold' : stat.match_rate >= 60 ? 'text-yellow-600' : 'text-red-600'}>
+                            {stat.match_rate}%
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right border border-border-theme">
+                          <span className={stat.accuracy >= 95 ? 'text-green-600 font-semibold' : stat.accuracy >= 85 ? 'text-yellow-600' : 'text-red-600'}>
+                            {stat.accuracy}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 高频失败项目 */}
+            <div>
+              <h3 className="text-sm font-semibold mb-3 text-text-primary">高频未匹配项目（出现≥2次）</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-bg-subtle">
+                      <th className="px-3 py-2 text-left border border-border-theme">序号</th>
+                      <th className="px-3 py-2 text-left border border-border-theme">项目名称</th>
+                      <th className="px-3 py-2 text-left border border-border-theme">模态</th>
+                      <th className="px-3 py-2 text-right border border-border-theme">出现次数</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {frequentFailures.slice(0, 30).map((item: any, index: number) => (
+                      <tr key={index} className="hover:bg-bg-subtle/50">
+                        <td className="px-3 py-2 border border-border-theme text-text-secondary">{index + 1}</td>
+                        <td className="px-3 py-2 border border-border-theme">{item.check_item}</td>
+                        <td className="px-3 py-2 border border-border-theme">
+                          <Tag className="text-xs">{item.modality}</Tag>
+                        </td>
+                        <td className="px-3 py-2 text-right border border-border-theme font-semibold text-red-600">{item.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {frequentFailures.length > 30 && (
+                  <div className="mt-2 text-xs text-text-secondary text-center">
+                    还有 {frequentFailures.length - 30} 个项目未显示
+                  </div>
+                )}
+              </div>
             </div>
           </TabPane>
         </Tabs>
