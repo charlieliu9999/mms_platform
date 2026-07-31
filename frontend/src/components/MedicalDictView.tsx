@@ -109,14 +109,14 @@ export function MedicalDictView() {
   return (
     <div className="flex flex-col h-full space-y-3">
       {/* 词典类型 Type Filter Chips & Header Controls */}
-      <div className="flex items-center justify-between gap-2 flex-wrap p-2 rounded-xl border bg-bg-subtle border-border-theme">
-        <div className="flex items-center gap-1.5 flex-wrap">
+      <div className="flex items-center justify-between gap-2 flex-wrap p-1.5 rounded-lg border bg-bg-subtle border-border-theme">
+        <div className="flex items-center gap-1 flex-wrap">
           {TYPES.map((t) => (
             <button
               key={t.key}
               title={t.hint}
               onClick={() => { setActiveType(t.key); setPage(1); }}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border cursor-pointer ${
+              className={`px-2 py-1 text-[11px] font-medium rounded-md transition-all border cursor-pointer ${
                 activeType === t.key
                   ? 'bg-brand-color text-white border-brand-color shadow-xs'
                   : 'bg-bg-card text-text-secondary hover:bg-bg-subtle border-border-theme'
@@ -127,22 +127,22 @@ export function MedicalDictView() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-normal text-text-secondary">共 {total} 项</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-normal text-text-secondary whitespace-nowrap">共 {total} 项</span>
           <Input
-            prefix={<Search className="w-3.5 h-3.5 text-text-secondary mr-1" />}
-            placeholder="搜索词条..."
+            prefix={<Search className="w-3 h-3 text-text-secondary mr-0.5" />}
+            placeholder="搜索..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onPressEnter={handleSearchSubmit}
-            className="w-44 text-xs h-8"
+            className="w-32 text-xs h-7"
             allowClear
           />
 
-          <Button size="small" type="primary" icon={<Plus className="w-3.5 h-3.5" />} onClick={openNew}>
-            新增词条
+          <Button size="small" type="primary" icon={<Plus className="w-3 h-3" />} onClick={openNew} className="h-7 text-xs px-2">
+            新增
           </Button>
-          <Button size="small" icon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />} onClick={load} />
+          <Button size="small" icon={<RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />} onClick={load} className="h-7 px-1.5" />
         </div>
       </div>
 
