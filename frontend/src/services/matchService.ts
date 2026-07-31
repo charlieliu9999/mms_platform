@@ -1,8 +1,9 @@
 import apiClient from './api';
 
 export interface MatchRequest {
-  check_item: string;
+  name: string;
   modality: string;
+  version?: string;
 }
 
 export interface MatchResult {
@@ -54,11 +55,11 @@ export interface StatsData {
 export const matchAPI = {
   // 单个匹配
   matchOne: (data: MatchRequest): Promise<MatchResult> =>
-    apiClient.post('/match/one', data),
+    apiClient.post('/match', data),
 
   // 批量匹配
   matchBatch: (items: MatchRequest[]): Promise<MatchResult[]> =>
-    apiClient.post('/match/batch', { items }),
+    apiClient.post('/batch-match', { items }),
 };
 
 // 管理后台 API

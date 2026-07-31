@@ -23,7 +23,7 @@ const MatchTest: React.FC = () => {
     setLoading(true);
     try {
       const res = await matchAPI.matchOne({
-        check_item: rawText.trim(),
+        name: rawText.trim(),
         modality: modality,
       });
       setResult(res);
