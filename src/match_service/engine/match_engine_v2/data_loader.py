@@ -149,28 +149,28 @@ class RuleDataLoader:
 
     def _build_standard_indexes(self, df_all: pd.DataFrame):
         """构建标准表索引"""
-        # CT/MR/DSA/MG 直接分组（MG作为独立模态）
-        for modality in ['CT', 'MR', 'DSA', 'MG']:
+        # 独立模态：直接按 modality_name 分组
+        # 注意：RF、PET/CT、PET/MR、SPECT 都是独立模态（modality_name直接等于模态名）
+        for modality in ['CT', 'MR', 'DSA', 'MG', 'RF', 'SPECT', 'PET/CT', 'PET/MR']:
             df_mod = df_all[df_all['modality_name'] == modality]
-            self.df_standard[modality] = {}
-            for ver in df_mod['version'].unique():
-                self.df_standard[modality][ver] = df_mod[df_mod['version'] == ver].copy()
+            if not df_mod.empty:
+                self.df_standard[modality] = {}
+                for ver in df_mod['version'].unique():
+                    self.df_standard[modality][ver] = df_mod[df_mod['version'] == ver].copy()
+                logger.info(f"[RuleDataLoader] 加载 {modality} 标准: {len(df_mod)} 条")
 
-        # X线 按 device_type_name 拆分为 DR/RF（表驱动，替代脆弱的 checkitem_name 前缀判断）
-        # device_type_name 取值：DR/移动DR/床旁机/多功能X线机 → DR，RF → RF
+        # X线 按 device_type_name 拆分为 DR（表驱动）
+        # device_type_name 取值：DR/移动DR/床旁机/多功能X线机 → DR
         df_xray = df_all[df_all['modality_name'] == 'X线']
-        dev = df_xray['device_type_name'].fillna('')
-
-        sub_masks = {
-            'RF': dev == 'RF',
+        if not df_xray.empty:
+            dev = df_xray['device_type_name'].fillna('')
             # DR 及其设备变体（移动DR/床旁机/多功能X线机），并兜底空值/未知设备类型
-            'DR': ~dev.isin(['RF']),
-        }
-        for sub, mask in sub_masks.items():
-            df_sub = df_xray[mask]
-            self.df_standard[sub] = {}
-            for ver in df_sub['version'].unique():
-                self.df_standard[sub][ver] = df_sub[df_sub['version'] == ver].copy()
+            df_dr = df_xray[~dev.isin(['RF', 'MG'])]  # 排除RF和MG（它们是独立模态）
+            if not df_dr.empty:
+                self.df_standard['DR'] = {}
+                for ver in df_dr['version'].unique():
+                    self.df_standard['DR'][ver] = df_dr[df_dr['version'] == ver].copy()
+                logger.info(f"[RuleDataLoader] 加载 DR 标准: {len(df_dr)} 条")
 
     @property
     def is_ready(self) -> bool:
