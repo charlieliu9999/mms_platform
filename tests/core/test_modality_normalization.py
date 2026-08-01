@@ -53,17 +53,22 @@ class TestModalityNormalization:
         assert dispatcher._normalize_modality('超声') == 'US'
 
     def test_pet_series(self, dispatcher):
-        """测试 PET 系列映射"""
+        """测试 PET 系列映射（优化后：PET默认映射到PET/CT）"""
         assert dispatcher._normalize_modality('PET-CT') == 'PET/CT'
         assert dispatcher._normalize_modality('PET/CT') == 'PET/CT'
         assert dispatcher._normalize_modality('PET-MR') == 'PET/MR'
         assert dispatcher._normalize_modality('PET/MR') == 'PET/MR'
-        assert dispatcher._normalize_modality('PET') == 'PET'
+        assert dispatcher._normalize_modality('PET') == 'PET/CT'  # PET默认→PET/CT
 
     def test_nuclear_medicine(self, dispatcher):
-        """测试核医学模态"""
-        assert dispatcher._normalize_modality('NM') == 'NM'
-        assert dispatcher._normalize_modality('SPECT') == 'NM'
+        """测试核医学模态（优化后：精确映射到标准库编码）"""
+        assert dispatcher._normalize_modality('NM') == 'SPECT'      # NM默认→SPECT
+        assert dispatcher._normalize_modality('SPECT') == 'SPECT'   # SPECT→代码12
+        assert dispatcher._normalize_modality('PET') == 'PET/CT'    # PET默认→PET/CT
+        assert dispatcher._normalize_modality('PET/CT') == 'PET/CT' # PET/CT→代码10
+        assert dispatcher._normalize_modality('PET-CT') == 'PET/CT'
+        assert dispatcher._normalize_modality('PET/MR') == 'PET/MR' # PET/MR→代码11
+        assert dispatcher._normalize_modality('PET-MR') == 'PET/MR'
 
     def test_dsa_mapping(self, dispatcher):
         """测试 DSA/ANGIO 映射"""
@@ -124,6 +129,13 @@ class TestModalityNormalization:
         assert dispatcher._normalize_modality('X线') == 'DR'
         assert dispatcher._normalize_modality('超声') == 'US'
         assert dispatcher._normalize_modality('放射') == 'DR'
+
+    def test_special_ct_techniques(self, dispatcher):
+        """测试特殊CT技术映射"""
+        assert dispatcher._normalize_modality('CBCT') == 'CT'    # 锥形束CT
+        assert dispatcher._normalize_modality('CT-DE') == 'CT'   # 双能CT
+        assert dispatcher._normalize_modality('CT-4D') == 'CT'   # 四维CT
+        assert dispatcher._normalize_modality('cbct') == 'CT'    # 大小写不敏感
 
 
 if __name__ == '__main__':

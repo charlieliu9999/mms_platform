@@ -47,13 +47,13 @@ class MatchDispatcher:
         'ULTRASOUND': 'US',
         '超声': 'US',
 
-        # 核医学系列
-        'NM': 'NM',
-        'SPECT': 'NM',
-        'PET': 'PET',
-        'PET/CT': 'PET/CT',
+        # 核医学系列（优化：精确映射到标准库模态代码）
+        'NM': 'SPECT',        # 核医学默认映射到SPECT（代码12）
+        'SPECT': 'SPECT',     # 单光子发射计算机断层显像（代码12）
+        'PET': 'PET/CT',      # PET默认映射到PET/CT（代码10）
+        'PET/CT': 'PET/CT',   # 正电子发射计算机断层显像/CT（代码10）
         'PET-CT': 'PET/CT',
-        'PET/MR': 'PET/MR',
+        'PET/MR': 'PET/MR',   # 正电子发射计算机断层显像/MR（代码11）
         'PET-MR': 'PET/MR',
 
         # 介入系列
@@ -65,6 +65,11 @@ class MatchDispatcher:
         'FL': 'RF',
         'MG': 'MG',
         'OCT': 'OCT',
+
+        # 特殊CT技术
+        'CBCT': 'CT',         # 锥形束CT → CT
+        'CT-DE': 'CT',        # 双能CT → CT
+        'CT-4D': 'CT',        # 四维CT → CT
     }
 
     def __init__(self, session: AsyncSession, engine_holder):
