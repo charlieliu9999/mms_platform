@@ -1,0 +1,474 @@
+{
+  "task_id": 7,
+  "timestamp": "2026-08-01T20:46:03.737144",
+  "modality_stats": [
+    {
+      "modality": "US",
+      "total": 603,
+      "matched": 560,
+      "match_rate": 92.86898839137645,
+      "avg_confidence": 1.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "CT",
+      "total": 494,
+      "matched": 473,
+      "match_rate": 95.74898785425101,
+      "avg_confidence": 0.9077167019027484,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "MR",
+      "total": 356,
+      "matched": 315,
+      "match_rate": 88.48314606741573,
+      "avg_confidence": 0.9207936507936508,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "MRI",
+      "total": 225,
+      "matched": 208,
+      "match_rate": 92.44444444444444,
+      "avg_confidence": 0.9490384615384615,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "XR",
+      "total": 191,
+      "matched": 122,
+      "match_rate": 63.87434554973822,
+      "avg_confidence": 0.9270491803278689,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "NM",
+      "total": 137,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "ANGIO",
+      "total": 87,
+      "matched": 27,
+      "match_rate": 31.03448275862069,
+      "avg_confidence": 1.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "FL",
+      "total": 29,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "OCT",
+      "total": 10,
+      "matched": 10,
+      "match_rate": 100.0,
+      "avg_confidence": 1.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "CBCT",
+      "total": 9,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "CT-DE",
+      "total": 7,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "MG",
+      "total": 5,
+      "matched": 5,
+      "match_rate": 100.0,
+      "avg_confidence": 1.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "CBBCT",
+      "total": 4,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "SPECT",
+      "total": 2,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "CONSULT",
+      "total": 2,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "OTHER",
+      "total": 2,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "PET/CT",
+      "total": 1,
+      "matched": 1,
+      "match_rate": 100.0,
+      "avg_confidence": 1.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "PET",
+      "total": 1,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "FUNC",
+      "total": 1,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    },
+    {
+      "modality": "CT-4D",
+      "total": 1,
+      "matched": 0,
+      "match_rate": 0.0,
+      "avg_confidence": 0.0,
+      "avg_response_time": 0.0
+    }
+  ],
+  "failure_stats": [
+    {
+      "reason": "no_standard",
+      "count": 446
+    }
+  ],
+  "frequent_failures": [
+    {
+      "check_item": "SPECT局部骨显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 31
+    },
+    {
+      "check_item": "SPECT三时相骨显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 9
+    },
+    {
+      "check_item": "PET/CT局部",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 8
+    },
+    {
+      "check_item": "PET/CT躯干",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 7
+    },
+    {
+      "check_item": "SPECT三时相骨显像,SPECT局部骨显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 7
+    },
+    {
+      "check_item": "SPECT甲状腺显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 7
+    },
+    {
+      "check_item": "RF关节造影",
+      "modality": "XR",
+      "failure_reason": "no_standard",
+      "frequency": 6
+    },
+    {
+      "check_item": "SPECT放射性核素标记白细胞显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 6
+    },
+    {
+      "check_item": "SPECT全身骨显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 5
+    },
+    {
+      "check_item": "CT全脊柱(增强)",
+      "modality": "CT",
+      "failure_reason": "no_standard",
+      "frequency": 3
+    },
+    {
+      "check_item": "CT全脊柱(平扫+增强)",
+      "modality": "CT",
+      "failure_reason": "no_standard",
+      "frequency": 3
+    },
+    {
+      "check_item": "PET/MR躯干",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 3
+    },
+    {
+      "check_item": "RF上消化道造影",
+      "modality": "FL",
+      "failure_reason": "no_standard",
+      "frequency": 3
+    },
+    {
+      "check_item": "SPECT亲肿瘤显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 3
+    },
+    {
+      "check_item": "SPECT肺灌注平面显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 3
+    },
+    {
+      "check_item": "SPECT肾动态显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 3
+    },
+    {
+      "check_item": "SPECT脑灌注显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 3
+    },
+    {
+      "check_item": "DR正、侧位",
+      "modality": "XR",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "DR正位",
+      "modality": "XR",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "DSA右心导管检查术",
+      "modality": "ANGIO",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "DSA腹主动脉-髂动脉支架置入术",
+      "modality": "ANGIO",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "DSA髂动脉支架置入(PTA)",
+      "modality": "ANGIO",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "MR靶向穿刺",
+      "modality": "MRI",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "PET/CT躯干+头部",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "RF全消化道造影",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "RF吞咽造影",
+      "modality": "FL",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "RF泌尿系排泄造影",
+      "modality": "FL",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "RF窦道及瘘道造影",
+      "modality": "FL",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "SPECT全身显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "SPECT心肌显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "SPECT心脏显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "SPECT淋巴显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "SPECT肝胆动态显像",
+      "modality": "NM",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "US彩色多普勒超声检查",
+      "modality": "US",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "超声引导下足部封闭治疗",
+      "modality": "US",
+      "failure_reason": "no_standard",
+      "frequency": 2
+    },
+    {
+      "check_item": "CBCT患牙(小视野)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CBCT牙槽骨(小视野)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CBCT颅颌面(平扫)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CBCT颌面部(小视野小体素平扫)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CBCT颌面部(平扫)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CBCT颌骨(小视野)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CBCT颌骨(小视野横断面成像)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CBCT颌骨(横断面成像)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CBCT颞下颌关节(平扫)",
+      "modality": "CBCT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CT 原发部位及区域淋巴结(平扫+增强)",
+      "modality": "CT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CT 受累部位双能CT(尿酸盐晶体成像)",
+      "modality": "CT-DE",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CT 腹部(4DCT 口服及静脉对比剂)",
+      "modality": "CT-4D",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CT/MRI/PET-CT(化疗前基线)",
+      "modality": "MR",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CT主动脉根部(心电门控增强多排螺旋CT)",
+      "modality": "CT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    },
+    {
+      "check_item": "CT主动脉根部及外周血管多期增强扫描(平扫+增强+三维重建)",
+      "modality": "CT",
+      "failure_reason": "no_standard",
+      "frequency": 1
+    }
+  ]
+}

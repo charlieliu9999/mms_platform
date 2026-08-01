@@ -24,17 +24,79 @@ AUTO_CACHE_MIN_CONFIDENCE = 0.8
 class MatchDispatcher:
     """三层匹配分派器"""
 
+    # 模态归一化映射表（修复 MRI/XR 等标准名称无法匹配的问题）
+    MODALITY_NORMALIZATION = {
+        # MRI 系列
+        'MRI': 'MR',
+        'MR': 'MR',
+
+        # X线系列
+        'XR': 'DR',
+        'DR': 'DR',
+        'CR': 'DR',
+        'X线': 'DR',
+        '放射': 'DR',
+
+        # CT系列
+        'CT': 'CT',
+        'HRCT': 'CT',
+        'CTA': 'CT',
+
+        # 超声系列
+        'US': 'US',
+        'ULTRASOUND': 'US',
+        '超声': 'US',
+
+        # 核医学系列
+        'NM': 'NM',
+        'SPECT': 'NM',
+        'PET': 'PET',
+        'PET/CT': 'PET/CT',
+        'PET-CT': 'PET/CT',
+        'PET/MR': 'PET/MR',
+        'PET-MR': 'PET/MR',
+
+        # 介入系列
+        'ANGIO': 'DSA',
+        'DSA': 'DSA',
+
+        # 其他
+        'RF': 'RF',
+        'FL': 'RF',
+        'MG': 'MG',
+        'OCT': 'OCT',
+    }
+
     def __init__(self, session: AsyncSession, engine_holder):
         self.session = session
         self.engine_holder = engine_holder
         self.cache_service = CacheService(session)
         self._settings = get_settings()
 
+    def _normalize_modality(self, modality: str) -> str:
+        """模态归一化（修复 MRI→MR, XR→DR 等标准名称映射）"""
+        if not modality:
+            return modality
+
+        # 转大写并去除空格
+        modality_upper = modality.upper().strip()
+
+        # 查找映射，如果没有映射则返回原值
+        normalized = self.MODALITY_NORMALIZATION.get(modality_upper, modality_upper)
+
+        if normalized != modality_upper:
+            logger.debug(f"[Dispatcher] 模态归一化: {modality} → {normalized}")
+
+        return normalized
+
     async def match(self, text: str, modality: str, version: str = "V3.8.2") -> dict:
         """单条匹配：L1 → L2 → (L3 async)"""
 
+        # ── 模态归一化 ──
+        normalized_modality = self._normalize_modality(modality)
+
         # ── L1: 映射库查询 ──
-        cached = await self.cache_service.lookup(text, modality)
+        cached = await self.cache_service.lookup(text, normalized_modality)
         if cached is not None:
             logger.debug(f"[Dispatcher] L1 命中: {text[:30]}...")
             return cached
@@ -44,19 +106,19 @@ class MatchDispatcher:
         if engine is None or not engine.is_ready:
             return self._error_result(text, "引擎未就绪")
 
-        result = engine.match(text, modality, version)
+        result = engine.match(text, normalized_modality, version)
         tier = result.get("tier", "none")
         confidence = result.get("confidence", 0.0)
 
         # ── L1 回写：高置信结果自动入缓存 ──
         if tier in AUTO_CACHE_TIERS and confidence >= AUTO_CACHE_MIN_CONFIDENCE:
             source = "agent_confirmed" if confidence >= 0.95 else "algorithm"
-            await self.cache_service.store(text, modality, result, confidence, source)
+            await self.cache_service.store(text, normalized_modality, result, confidence, source)
             logger.debug(f"[Dispatcher] L2→L1 回写: tier={tier}, conf={confidence:.2f}")
 
         # ── L3: 失败项记录 feedback（异步 Agent 处理）──
         if tier in ("none", "ambiguous"):
-            await self._record_feedback(text, modality, result)
+            await self._record_feedback(text, normalized_modality, result)
 
         result["_cache_hit"] = False
         result["_tier"] = tier
