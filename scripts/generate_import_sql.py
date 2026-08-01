@@ -50,18 +50,14 @@ def generate_sql():
     sql_lines.append("-- 包含MG/US/SPECT/介入关键词")
     sql_lines.append("-- ======================")
     sql_lines.append("")
-    sql_lines.append("INSERT INTO nlp_medical_dict (word, modality_code, part_of_speech, category) VALUES")
+    sql_lines.append("INSERT INTO nlp_medical_dict (word, type, enable) VALUES")
 
     values = []
     for w in high_priority:
         word = w['word'].replace("'", "''")  # SQL转义
-        category = w['mapped_type']
-        pos = TYPE_TO_POS_MAP.get(category, 'n')
+        word_type = w['mapped_type']
 
-        # 模态代码（全模态通用）
-        modality_code = '99'
-
-        values.append(f"  ('{word}', '{modality_code}', '{pos}', '{category}')")
+        values.append(f"  ('{word}', '{word_type}', 0)")
 
     sql_lines.append(",\n".join(values))
     sql_lines.append("ON CONFLICT (word) DO NOTHING;")
@@ -73,16 +69,14 @@ def generate_sql():
     sql_lines.append(f"-- 第二批：普通优先级词汇 ({len(normal_priority)}条)")
     sql_lines.append("-- ======================")
     sql_lines.append("")
-    sql_lines.append("INSERT INTO nlp_medical_dict (word, modality_code, part_of_speech, category) VALUES")
+    sql_lines.append("INSERT INTO nlp_medical_dict (word, type, enable) VALUES")
 
     values = []
     for w in normal_priority:
         word = w['word'].replace("'", "''")
-        category = w['mapped_type']
-        pos = TYPE_TO_POS_MAP.get(category, 'n')
-        modality_code = '99'
+        word_type = w['mapped_type']
 
-        values.append(f"  ('{word}', '{modality_code}', '{pos}', '{category}')")
+        values.append(f"  ('{word}', '{word_type}', 0)")
 
     sql_lines.append(",\n".join(values))
     sql_lines.append("ON CONFLICT (word) DO NOTHING;")

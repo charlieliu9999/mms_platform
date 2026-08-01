@@ -53,15 +53,20 @@ class RuleDataLoader:
         self.mdict = {r[0]: r[1] for r in rows}
         logger.info(f"[RuleDataLoader] 加载医学词典: {len(self.mdict)} 词条")
 
-        # 注册到 jieba
+        # 注册到 jieba（组合词汇使用更高词频，确保不被拆分）
         for word, wtype in self.mdict.items():
-            jieba.add_word(word, tag=wtype, freq=883635)
+            # 多字组合词（如"双侧乳腺"）需要更高词频以避免被拆分
+            if len(word) >= 3 and any(prefix in word for prefix in ['双侧', '左侧', '右侧', '单侧']):
+                freq = 999999
+            else:
+                freq = 883635
+            jieba.add_word(word, tag=wtype, freq=freq)
 
     async def _load_phrase_map(self, conn):
         """加载同义词/别名映射"""
         result = await conn.execute(text(
             "SELECT id, modality, src_word, dst_word, step, version "
-            "FROM nlp_phrase_map WHERE enable = 1"
+            "FROM nlp_phrase_map WHERE enable = 0"
         ))
         rows = result.fetchall()
         self.alias2std = pd.DataFrame(
@@ -144,23 +149,22 @@ class RuleDataLoader:
 
     def _build_standard_indexes(self, df_all: pd.DataFrame):
         """构建标准表索引"""
-        # CT/MR/DSA 直接分组
-        for modality in ['CT', 'MR', 'DSA']:
+        # CT/MR/DSA/MG 直接分组（MG作为独立模态）
+        for modality in ['CT', 'MR', 'DSA', 'MG']:
             df_mod = df_all[df_all['modality_name'] == modality]
             self.df_standard[modality] = {}
             for ver in df_mod['version'].unique():
                 self.df_standard[modality][ver] = df_mod[df_mod['version'] == ver].copy()
 
-        # X线 按 device_type_name 拆分为 DR/RF/MG（表驱动，替代脆弱的 checkitem_name 前缀判断）
-        # device_type_name 取值：DR/移动DR/床旁机/多功能X线机 → DR，MG → MG，RF → RF
+        # X线 按 device_type_name 拆分为 DR/RF（表驱动，替代脆弱的 checkitem_name 前缀判断）
+        # device_type_name 取值：DR/移动DR/床旁机/多功能X线机 → DR，RF → RF
         df_xray = df_all[df_all['modality_name'] == 'X线']
         dev = df_xray['device_type_name'].fillna('')
 
         sub_masks = {
             'RF': dev == 'RF',
-            'MG': dev == 'MG',
             # DR 及其设备变体（移动DR/床旁机/多功能X线机），并兜底空值/未知设备类型
-            'DR': ~dev.isin(['RF', 'MG']),
+            'DR': ~dev.isin(['RF']),
         }
         for sub, mask in sub_masks.items():
             df_sub = df_xray[mask]
