@@ -609,7 +609,7 @@ async def get_standard_items(
     offset = (page - 1) * page_size
 
     # 构建查询条件（映射前端字段名到数据库字段名）
-    where_clauses = ["1=1"]
+    where_clauses = ["is_deleted = 0"]  # 只查询未删除的数据
     params = {}
 
     if modality:
@@ -685,7 +685,7 @@ async def get_standard_item_stats(
 
     # 如果指定了version参数，直接按版本筛选
     if version:
-        where_clauses = ["1=1"]
+        where_clauses = ["is_deleted = 0"]
         params = {"version": version}
         where_clauses.append("version = :version")
         where_sql = " AND ".join(where_clauses)
@@ -719,6 +719,7 @@ async def get_standard_item_stats(
                 COUNT(DISTINCT modality_name) as modality_count,
                 COUNT(DISTINCT scope_name) as body_part_count
             FROM nlp_checkitem_standard
+            WHERE is_deleted = 0
         """
         result = await session.execute(text(stats_sql))
         stats = dict(result.mappings().first())
@@ -726,6 +727,7 @@ async def get_standard_item_stats(
         modality_sql = """
             SELECT modality_name as modality, COUNT(*) as count
             FROM nlp_checkitem_standard
+            WHERE is_deleted = 0
             GROUP BY modality_name ORDER BY count DESC
         """
         result = await session.execute(text(modality_sql))
@@ -748,6 +750,7 @@ async def get_standard_item_stats(
                                version DESC
                        ) as rn
                 FROM nlp_checkitem_standard
+                WHERE is_deleted = 0
             )
             SELECT
                 COUNT(*) as total,
@@ -772,6 +775,7 @@ async def get_standard_item_stats(
                                version DESC
                        ) as rn
                 FROM nlp_checkitem_standard
+                WHERE is_deleted = 0
             )
             SELECT modality_name as modality, COUNT(*) as count
             FROM latest_versions
@@ -796,6 +800,7 @@ async def get_standard_item_stats(
                            version DESC
                    ) as rn
             FROM nlp_checkitem_standard
+            WHERE is_deleted = 0
         )
         SELECT scope_name as body_part_l1, COUNT(*) as count
         FROM latest_versions
@@ -806,7 +811,7 @@ async def get_standard_item_stats(
     by_body_part = {row[0]: row[1] for row in body_res}
 
     # 可用版本号列表
-    versions_sql = "SELECT DISTINCT version FROM nlp_checkitem_standard WHERE version IS NOT NULL ORDER BY version DESC"
+    versions_sql = "SELECT DISTINCT version FROM nlp_checkitem_standard WHERE version IS NOT NULL AND is_deleted = 0 ORDER BY version DESC"
     ver_res = await session.execute(text(versions_sql))
     available_versions = [row[0] for row in ver_res]
 
