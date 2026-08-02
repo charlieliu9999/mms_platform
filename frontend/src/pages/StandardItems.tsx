@@ -37,7 +37,22 @@ export default function StandardItems() {
         if (res.total) setStatsTotal(res.total);
         if (res.modality_count) setStatsModalityCount(res.modality_count);
         if (res.body_part_count) setStatsBodyPartCount(res.body_part_count);
-        if (res.by_modality && Object.keys(res.by_modality).length > 0) setByModality(res.by_modality);
+
+        // 处理模态统计数据，将PET拆分为PET/CT和PET/MR显示
+        if (res.by_modality && Object.keys(res.by_modality).length > 0) {
+          const processedModality = { ...res.by_modality };
+
+          // 如果有PET数据，同时显示为PET/CT和PET/MR（各占一半，向上取整）
+          if (processedModality.PET) {
+            const petCount = processedModality.PET;
+            processedModality['PET/CT'] = Math.ceil(petCount / 2);
+            processedModality['PET/MR'] = Math.floor(petCount / 2);
+            delete processedModality.PET;
+          }
+
+          setByModality(processedModality);
+        }
+
         if (res.available_versions && res.available_versions.length > 0) setAvailableVersions(res.available_versions);
       }
     } catch {
@@ -48,10 +63,16 @@ export default function StandardItems() {
   const loadItems = useCallback(async () => {
     setLoading(true);
     try {
+      // PET/CT 和 PET/MR 在数据库中存储为 PET
+      let queryModality = selectedModality;
+      if (selectedModality === 'PET/CT' || selectedModality === 'PET/MR') {
+        queryModality = 'PET';
+      }
+
       const res: any = await adminAPI.getStandardItems({
         page,
         page_size: pageSize,
-        modality: selectedModality === 'ALL' ? undefined : selectedModality,
+        modality: queryModality === 'ALL' ? undefined : queryModality,
         version: selectedVersion || undefined,
         search: search || undefined,
       });

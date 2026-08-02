@@ -673,46 +673,136 @@ async def get_standard_items(
 @router.get("/standard-items/stats")
 async def get_standard_item_stats(
     version: Optional[str] = None,
+    include_all_versions: bool = False,
     session: AsyncSession = Depends(_get_session)
 ):
-    """标准项目统计数据（支持版本号聚合）"""
-    where_clauses = ["1=1"]
-    params = {}
+    """标准项目统计数据
 
+    Args:
+        version: 指定版本号，如果为空则显示所有版本数据
+        include_all_versions: 是否包含所有版本（默认False，只统计每个模态的最新版本）
+    """
+
+    # 如果指定了version参数，直接按版本筛选
     if version:
+        where_clauses = ["1=1"]
+        params = {"version": version}
         where_clauses.append("version = :version")
-        params["version"] = version
+        where_sql = " AND ".join(where_clauses)
 
-    where_sql = " AND ".join(where_clauses)
+        # 总体统计
+        stats_sql = f"""
+            SELECT
+                COUNT(*) as total,
+                COUNT(DISTINCT modality_name) as modality_count,
+                COUNT(DISTINCT scope_name) as body_part_count
+            FROM nlp_checkitem_standard WHERE {where_sql}
+        """
+        result = await session.execute(text(stats_sql), params)
+        stats = dict(result.mappings().first())
 
-    # 总体统计
-    stats_sql = f"""
-        SELECT
-            COUNT(*) as total,
-            COUNT(DISTINCT modality_name) as modality_count,
-            COUNT(DISTINCT scope_name) as body_part_count
-        FROM nlp_checkitem_standard WHERE {where_sql}
-    """
-    result = await session.execute(text(stats_sql), params)
-    stats = dict(result.mappings().first())
+        # 各模态分布
+        modality_sql = f"""
+            SELECT modality_name as modality, COUNT(*) as count
+            FROM nlp_checkitem_standard WHERE {where_sql}
+            GROUP BY modality_name ORDER BY count DESC
+        """
+        result = await session.execute(text(modality_sql), params)
+        modality_distribution = [dict(row._mapping) for row in result]
+        by_modality = {item["modality"]: item["count"] for item in modality_distribution if item.get("modality")}
 
-    # 各模态分布
-    modality_sql = f"""
-        SELECT modality_name as modality, COUNT(*) as count
-        FROM nlp_checkitem_standard WHERE {where_sql}
-        GROUP BY modality_name ORDER BY count DESC
-    """
-    result = await session.execute(text(modality_sql), params)
-    modality_distribution = [dict(row._mapping) for row in result]
-    by_modality = {item["modality"]: item["count"] for item in modality_distribution if item.get("modality")}
+    elif include_all_versions:
+        # 包含所有版本的数据
+        stats_sql = """
+            SELECT
+                COUNT(*) as total,
+                COUNT(DISTINCT modality_name) as modality_count,
+                COUNT(DISTINCT scope_name) as body_part_count
+            FROM nlp_checkitem_standard
+        """
+        result = await session.execute(text(stats_sql))
+        stats = dict(result.mappings().first())
 
-    # 一级部位分布 Top 10
-    body_sql = f"""
+        modality_sql = """
+            SELECT modality_name as modality, COUNT(*) as count
+            FROM nlp_checkitem_standard
+            GROUP BY modality_name ORDER BY count DESC
+        """
+        result = await session.execute(text(modality_sql))
+        modality_distribution = [dict(row._mapping) for row in result]
+        by_modality = {item["modality"]: item["count"] for item in modality_distribution if item.get("modality")}
+
+    else:
+        # 默认：只统计每个模态的最新版本数据
+        # 使用窗口函数找出每个模态的最新版本记录
+        stats_sql = """
+            WITH latest_versions AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY modality_name, checkitem_code
+                           ORDER BY
+                               CASE
+                                   WHEN version LIKE 'V%' THEN 1
+                                   ELSE 2
+                               END,
+                               version DESC
+                       ) as rn
+                FROM nlp_checkitem_standard
+            )
+            SELECT
+                COUNT(*) as total,
+                COUNT(DISTINCT modality_name) as modality_count,
+                COUNT(DISTINCT scope_name) as body_part_count
+            FROM latest_versions
+            WHERE rn = 1
+        """
+        result = await session.execute(text(stats_sql))
+        stats = dict(result.mappings().first())
+
+        modality_sql = """
+            WITH latest_versions AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY modality_name, checkitem_code
+                           ORDER BY
+                               CASE
+                                   WHEN version LIKE 'V%' THEN 1
+                                   ELSE 2
+                               END,
+                               version DESC
+                       ) as rn
+                FROM nlp_checkitem_standard
+            )
+            SELECT modality_name as modality, COUNT(*) as count
+            FROM latest_versions
+            WHERE rn = 1
+            GROUP BY modality_name ORDER BY count DESC
+        """
+        result = await session.execute(text(modality_sql))
+        modality_distribution = [dict(row._mapping) for row in result]
+        by_modality = {item["modality"]: item["count"] for item in modality_distribution if item.get("modality")}
+
+    # 一级部位分布 Top 10（始终使用最新版本）
+    body_sql = """
+        WITH latest_versions AS (
+            SELECT *,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY modality_name, checkitem_code
+                       ORDER BY
+                           CASE
+                               WHEN version LIKE 'V%' THEN 1
+                               ELSE 2
+                           END,
+                           version DESC
+                   ) as rn
+            FROM nlp_checkitem_standard
+        )
         SELECT scope_name as body_part_l1, COUNT(*) as count
-        FROM nlp_checkitem_standard WHERE {where_sql} AND scope_name IS NOT NULL
+        FROM latest_versions
+        WHERE rn = 1 AND scope_name IS NOT NULL
         GROUP BY scope_name ORDER BY count DESC LIMIT 10
     """
-    body_res = await session.execute(text(body_sql), params)
+    body_res = await session.execute(text(body_sql))
     by_body_part = {row[0]: row[1] for row in body_res}
 
     # 可用版本号列表
