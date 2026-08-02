@@ -104,3 +104,9 @@ class TokenizerService:
             return dst, entity_type
 
         return entity, self.mdict.get(entity, pos)
+
+    def clear_cache(self):
+        """C3 修复：清除 lru_cache，热重载规则数据后必须调用。
+        @lru_cache 装饰实例方法时，缓存绑定在函数对象上，
+        数据更新后旧缓存不会自动失效，需手动清除。"""
+        self.get_standard_name.cache_clear()

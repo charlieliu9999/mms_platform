@@ -67,8 +67,13 @@ class PreprocessService:
                 .replace('中、上', '中上').replace('上、下', '上下')
                 .upper().replace('T1WI', '').replace('T2WI', ''))
 
-        # 去除连字符
+        # 去除连字符（保护医学缩写 CE-MRA/CE-MRV/CE-CT 等，Step 8.5 依赖原文判断增强）
+        _protected = ('CE-MRA', 'CE-MRV', 'CE-CT', 'CE-MRI')
+        for term in _protected:
+            text = text.replace(term, term.replace('-', '\x01'))
         text = re.sub(r'([A-Za-z]+)-([A-Za-z]+)', r'\1\2', text)
+        for term in _protected:
+            text = text.replace(term.replace('-', '\x01'), term)
 
         # 脊椎节段字母标准化
         text = re.sub(r'-颈(\d)', r'-C\1', text)
@@ -117,18 +122,18 @@ class PreprocessService:
     @staticmethod
     def _complete_vertebra_segments(text: str) -> str:
         """脊椎节段补全"""
-        # 颈椎
+        # 颈椎（H3 修复：字符类中 | 是字面量，改用非捕获组）
         if '颈椎' not in text:
-            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)[C|颈](\d+)', r'\1颈椎C\2', text)
+            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)(?:C|颈)(\d+)', r'\1颈椎C\2', text)
         # 胸椎
         if '胸椎' not in text:
-            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)[T|胸](\d+)', r'\1胸椎T\2', text)
+            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)(?:T|胸)(\d+)', r'\1胸椎T\2', text)
         # 腰椎
         if '腰椎' not in text:
-            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)[L|腰](\d+)', r'\1腰椎L\2', text)
+            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)(?:L|腰)(\d+)', r'\1腰椎L\2', text)
         # 骶椎
         if '骶椎' not in text:
-            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)[S|骶](\d+)', r'\1骶椎S\2', text)
+            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)(?:S|骶)(\d+)', r'\1骶椎S\2', text)
 
         # 段合并
         text = re.sub(r'(T\d+[-~]L\d)', r'胸腰段\1', text)

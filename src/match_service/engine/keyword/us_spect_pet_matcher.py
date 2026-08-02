@@ -427,10 +427,15 @@ class USSpectPetMatcher:
         self._us_unmatchable: Tuple[str, ...] = tuple()
         self._spect_body_keywords: List[Tuple[List[str], str]] = []
         self._spect_scan_keywords: List[Tuple[List[str], str]] = []
+        self._spect_unmatchable: Tuple[str, ...] = tuple()  # H1: SPECT 排除词
         self._pet_body_keywords: List[Tuple[List[str], str]] = []
+        self._pet_unmatchable: Tuple[str, ...] = tuple()    # H1: PET 排除词
         self._oct_body_keywords: List[Tuple[List[str], str]] = []
+        self._oct_unmatchable: Tuple[str, ...] = tuple()    # H1: OCT 排除词
         self._dsa_body_keywords: List[Tuple[List[str], str]] = []
         self._dsa_unmatchable: Tuple[str, ...] = tuple()
+        # C4: 最近一次匹配的置信层级（exact/degraded），供 orchestrator 读取
+        self._last_tier: str = 'exact'
 
     async def initialize(self):
         # Phase A: 独立化后 engine 必须外部注入
@@ -525,8 +530,11 @@ class USSpectPetMatcher:
         self._us_unmatchable = _unmatch('US')
         self._spect_body_keywords = _group('SPECT', 'body')
         self._spect_scan_keywords = _group('SPECT', 'scan')
+        self._spect_unmatchable = _unmatch('SPECT')  # H1
         self._pet_body_keywords = _group('PET', 'body')
+        self._pet_unmatchable = _unmatch('PET')      # H1
         self._oct_body_keywords = _group('OCT', 'body')
+        self._oct_unmatchable = _unmatch('OCT')      # H1
         self._dsa_body_keywords = _group('DSA', 'body')
         self._dsa_unmatchable = _unmatch('DSA')
 
@@ -544,9 +552,16 @@ class USSpectPetMatcher:
 
         Returns:
             [(item_code, item_name), ...] 匹配到的标准项列表
+
+        Note:
+            匹配后通过 self._last_tier 获取置信层级（'exact' 或 'degraded'），
+            orchestrator 的 _kw_match 据此设置正确的 confidence。
         """
         if not self._initialized:
             return []
+
+        # 每次匹配前重置 tier
+        self._last_tier = 'exact'
 
         if modality == 'US':
             return self._match_us(order_name)
@@ -640,8 +655,13 @@ class USSpectPetMatcher:
         result = df[mask]
 
         if result.empty and scan_method != '常规':
+            # C4 修复：扫描方式降级（如造影→常规），标记为 degraded
+            # 避免 orchestrator 以 exact/1.0 置信度缓存错误结果
             mask = (df['body_part_l2'] == body_l2) & (df['scan_method'] == '常规')
             result = df[mask]
+            if not result.empty:
+                self._last_tier = 'degraded'
+                logger.info(f"[US] 扫描方式降级: {scan_method}→常规 (body={body_l2})")
 
         # 如果结果过多（>3），智能选择最通用的项目
         if len(result) > 3:
@@ -660,6 +680,10 @@ class USSpectPetMatcher:
     # ─── SPECT 匹配 ───────────────────────────────────────────────────────────
 
     def _match_spect(self, order_name: str) -> List[Tuple[str, str]]:
+        # H1 修复：排除介入/科研类医嘱（与 US/DSA 保持一致）
+        if any(marker in order_name for marker in self._spect_unmatchable):
+            return []
+
         # SPECT 标准表项目名直接包含了描述信息
         # 策略：提取器官关键词 + 显像方式 → 查 body_part_l2 + scan_method
         body_l2 = self._extract_spect_body(order_name)
@@ -694,16 +718,22 @@ class USSpectPetMatcher:
 
         mask = (df['body_part_l2'] == body_l2)
         result = df[mask]
-        if len(result) == 1:
-            return [(str(result.iloc[0]['item_code']), str(result.iloc[0]['item_name']))]
-        elif not result.empty:
-            first = result.iloc[0]
-            return [(str(first['item_code']), str(first['item_name']))]
-        return []
+        if result.empty:
+            return []
+        # H4 修复：返回所有匹配结果，不再静默丢弃
+        # 多结果时标记 degraded，提示上层需人工确认
+        if len(result) > 1:
+            self._last_tier = 'degraded'
+            logger.info(f"[SPECT] 多结果({len(result)}条): body={body_l2}, scan={scan_method}")
+        return [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
 
     # ─── PET 匹配 ─────────────────────────────────────────────────────────────
 
     def _match_pet(self, order_name: str, modality: str) -> List[Tuple[str, str]]:
+        # H1 修复：排除科研/介入类医嘱
+        if any(marker in order_name for marker in self._pet_unmatchable):
+            return []
+
         df = self._pet_ct_items if modality == 'PET/CT' else self._pet_mr_items
         body_l2 = self._extract_pet_body(order_name)
 
@@ -731,13 +761,18 @@ class USSpectPetMatcher:
                 elif kw == name or kw in name:
                     return body_l2
 
-        # 默认躯干
-        return '躯干'
+        # H2 修复：不再默认回退 '躯干'（会产生假阳性）
+        # 无法识别部位的 PET 医嘱应返回 None，由上层标记为 none/0.0
+        return None
 
     # ─── OCT 匹配 ─────────────────────────────────────────────────────────────
 
     def _match_oct(self, order_name: str) -> List[Tuple[str, str]]:
         """OCT 匹配：提取部位关键词 → 查 body_part_l2"""
+        # H1 修复：排除介入/科研类医嘱
+        if any(marker in order_name for marker in self._oct_unmatchable):
+            return []
+
         body_l2 = self._extract_oct_body(order_name)
         if not body_l2:
             return []

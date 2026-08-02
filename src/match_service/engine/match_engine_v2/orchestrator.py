@@ -88,7 +88,11 @@ class MatchEngineOrchestrator:
         self._initialized = False
 
     async def initialize(self):
-        """初始化所有服务"""
+        """初始化所有服务（支持热重载：重复调用时清除旧缓存）"""
+        # C3 修复：热重载时清除旧 tokenizer 缓存，避免返回过期映射
+        if self.tokenizer_service is not None:
+            self.tokenizer_service.clear_cache()
+
         await self.data_loader.initialize()
 
         self.preprocess_service = PreprocessService(self.data_loader.pre_rules)
@@ -205,8 +209,12 @@ class MatchEngineOrchestrator:
             return _empty_result(record, tier='error')
 
         standard = [{'code': code, 'name': name} for code, name in pairs]
-        # 关键词引擎为精确关键词命中：有结果即 exact，无结果 none
-        tier = 'exact' if standard else 'none'
+        # C4 修复：读取 matcher 的 _last_tier（降级匹配时为 'degraded'）
+        # 不再一律标记 exact，避免降级结果以 1.0 置信度写入缓存
+        if standard:
+            tier = getattr(self._kw_matcher, '_last_tier', 'exact')
+        else:
+            tier = 'none'
         return {
             'check_item': record,
             'num_standard': len(standard),

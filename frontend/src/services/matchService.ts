@@ -27,6 +27,9 @@ export interface StandardItem {
   post_processing?: string;
   version?: string;
   created_at?: string;
+  // 完整视图额外字段
+  position?: string;      // 摆位
+  scope?: string;         // 范围
 }
 
 export interface MedicalDictItem {

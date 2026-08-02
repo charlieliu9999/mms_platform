@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Table, Input, Select, Tag, Card, Row, Col, Statistic, Button } from 'antd';
-import { SearchOutlined, CheckSquareOutlined, AppstoreOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Table, Input, Select, Tag, Card, Row, Col, Statistic, Button, Radio, Tooltip } from 'antd';
+import { SearchOutlined, CheckSquareOutlined, AppstoreOutlined, ReloadOutlined, TableOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { adminAPI, StandardItem } from '../services/matchService';
 
 const MODALITY_OPTIONS = ['ALL', 'CT', 'MR', 'US', 'DR', 'RF', 'MG', 'SPECT', 'DSA', 'OCT', 'PET/CT', 'PET/MR'];
+
+type ViewMode = 'simple' | 'full';
 
 export default function StandardItems() {
   const [selectedVersion, setSelectedVersion] = useState<string>('');
@@ -11,6 +13,7 @@ export default function StandardItems() {
   const [search, setSearch] = useState<string>('');
   const [page, setPage] = useState<number>(1);
   const [pageSize] = useState<number>(20);
+  const [viewMode, setViewMode] = useState<ViewMode>('simple');
 
   const [loading, setLoading] = useState<boolean>(false);
   const [items, setItems] = useState<StandardItem[]>([]);
@@ -81,11 +84,13 @@ export default function StandardItems() {
     setPage(1);
   };
 
-  const columns = [
+  // 简化视图列（默认）
+  const simpleColumns = [
     {
       title: '标准编码',
       dataIndex: 'item_code',
       key: 'item_code',
+      width: 140,
       render: (code: string) => <span className="font-mono font-semibold text-brand-color">{code}</span>,
     },
     {
@@ -98,6 +103,7 @@ export default function StandardItems() {
       title: '检查模态',
       dataIndex: 'modality',
       key: 'modality',
+      width: 90,
       render: (modality: string) => (
         <Tag color="blue" className="font-bold px-2 py-0.5 rounded-md border-0 m-0">
           {modality}
@@ -107,6 +113,7 @@ export default function StandardItems() {
     {
       title: '解剖部位 (L1/L2)',
       key: 'body_part',
+      width: 180,
       render: (_: any, record: StandardItem) => (
         <span className="text-xs text-text-secondary">
           {record.body_part_l1 || '-'} {record.body_part_l2 ? `/ ${record.body_part_l2}` : ''}
@@ -116,6 +123,7 @@ export default function StandardItems() {
     {
       title: '扫描/后处理',
       key: 'methods',
+      width: 150,
       render: (_: any, record: StandardItem) => (
         <span className="text-xs text-text-secondary">
           {record.scan_method || '普通'} {record.post_processing ? `+ ${record.post_processing}` : ''}
@@ -126,6 +134,7 @@ export default function StandardItems() {
       title: '规则版本',
       dataIndex: 'version',
       key: 'version',
+      width: 100,
       render: (ver: string) => (
         <span className="text-xs font-mono text-text-secondary">
           {ver || selectedVersion || 'V3.8.2'}
@@ -133,6 +142,95 @@ export default function StandardItems() {
       ),
     },
   ];
+
+  // 完整视图列（详细模式）
+  const fullColumns = [
+    {
+      title: 'ID',
+      dataIndex: 'id',
+      key: 'id',
+      width: 80,
+      render: (id: number) => <span className="text-xs font-mono text-text-secondary">{id}</span>,
+    },
+    {
+      title: '模态',
+      dataIndex: 'modality',
+      key: 'modality',
+      width: 80,
+      render: (modality: string) => (
+        <Tag color="blue" className="font-bold px-2 py-0.5 rounded-md border-0 m-0 text-xs">
+          {modality}
+        </Tag>
+      ),
+    },
+    {
+      title: '一级部位',
+      dataIndex: 'body_part_l1',
+      key: 'body_part_l1',
+      width: 100,
+      render: (text: string) => <span className="text-xs text-text-primary">{text || '-'}</span>,
+    },
+    {
+      title: '二级',
+      dataIndex: 'body_part_l2',
+      key: 'body_part_l2',
+      width: 100,
+      render: (text: string) => <span className="text-xs text-text-primary">{text || '-'}</span>,
+    },
+    {
+      title: '三级部位',
+      dataIndex: 'body_part_l3',
+      key: 'body_part_l3',
+      width: 120,
+      render: (text: string) => <span className="text-xs text-text-primary">{text || '-'}</span>,
+    },
+    {
+      title: '摆位',
+      dataIndex: 'position',
+      key: 'position',
+      width: 100,
+      render: (text: string) => <span className="text-xs text-text-secondary">{text || '-'}</span>,
+    },
+    {
+      title: '范围',
+      dataIndex: 'scope',
+      key: 'scope',
+      width: 100,
+      render: (text: string) => <span className="text-xs text-text-secondary">{text || '-'}</span>,
+    },
+    {
+      title: '编码',
+      dataIndex: 'item_code',
+      key: 'item_code',
+      width: 140,
+      fixed: 'right' as const,
+      render: (code: string) => <span className="font-mono font-semibold text-brand-color text-xs">{code}</span>,
+    },
+    {
+      title: '名称',
+      dataIndex: 'item_name',
+      key: 'item_name',
+      width: 200,
+      fixed: 'right' as const,
+      render: (name: string) => <span className="font-bold text-text-primary text-xs">{name}</span>,
+    },
+    {
+      title: '扫描方式',
+      dataIndex: 'scan_method',
+      key: 'scan_method',
+      width: 100,
+      render: (text: string) => <span className="text-xs text-text-secondary">{text || '普通'}</span>,
+    },
+    {
+      title: '后处理',
+      dataIndex: 'post_processing',
+      key: 'post_processing',
+      width: 100,
+      render: (text: string) => <span className="text-xs text-text-secondary">{text || '-'}</span>,
+    },
+  ];
+
+  const columns = viewMode === 'simple' ? simpleColumns : fullColumns;
 
   return (
     <div className="space-y-5">
@@ -146,8 +244,25 @@ export default function StandardItems() {
           <p className="text-xs mt-1 m-0 text-text-secondary">维护国家医学影像标准检查项目，按规则版本号与检查模态进行统计与聚合</p>
         </div>
 
-        {/* 版本号 Selector */}
-        <div className="flex items-center gap-2 select-none">
+        {/* 版本号 & 视图模式切换 */}
+        <div className="flex items-center gap-3 select-none">
+          {/* 视图模式切换 */}
+          <Tooltip title={viewMode === 'simple' ? '切换到完整视图（显示所有字段）' : '切换到简化视图（常用字段）'}>
+            <Radio.Group
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value)}
+              size="small"
+              buttonStyle="solid"
+            >
+              <Radio.Button value="simple">
+                <UnorderedListOutlined /> 简化
+              </Radio.Button>
+              <Radio.Button value="full">
+                <TableOutlined /> 完整
+              </Radio.Button>
+            </Radio.Group>
+          </Tooltip>
+
           <span className="text-xs font-semibold shrink-0 text-text-secondary">选择标准版本:</span>
           <Select
             className="w-40 text-xs"
@@ -261,7 +376,14 @@ export default function StandardItems() {
             className="w-80 text-xs h-9"
             allowClear
           />
-          <span className="text-xs text-text-secondary">找到 {total} 条匹配结果</span>
+          <div className="flex items-center gap-3">
+            {viewMode === 'full' && (
+              <span className="text-xs text-amber-600 dark:text-amber-400">
+                💡 完整视图显示所有字段，支持横向滚动
+              </span>
+            )}
+            <span className="text-xs text-text-secondary">找到 {total} 条匹配结果</span>
+          </div>
         </div>
 
         <Table
@@ -276,7 +398,9 @@ export default function StandardItems() {
             onChange: (p) => setPage(p),
             showSizeChanger: false,
           }}
+          scroll={viewMode === 'full' ? { x: 1500 } : undefined}
           className="ant-table-striped"
+          size={viewMode === 'full' ? 'small' : 'middle'}
         />
       </Card>
     </div>

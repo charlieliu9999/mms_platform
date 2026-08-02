@@ -82,6 +82,10 @@ class DisambiguationService:
                     node_j.merge(node_0, self, pos_types=['scan', 'post', 'position', 'scope'])
                     node_j.std_names[node_j.pos_dict['body'][0]] = body_rel[0]
                     node_0 = node_j
+                    # C2 修复：合并后 node_0 已变更，必须重新计算 body_0/process_0
+                    # 否则后续循环使用过期值，导致 3+ 节点链式合并错误
+                    body_0 = node_0.std_names[node_0.pos_dict['body'][0]]
+                    process_0 = [node_0.std_names[i] for i in node_0.pos_dict[process_type]]
                 node_to_del.append(node_j)
 
             self._merge_process(node_0, process_type, modality, version)
