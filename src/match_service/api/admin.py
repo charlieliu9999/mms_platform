@@ -735,77 +735,37 @@ async def get_standard_item_stats(
         by_modality = {item["modality"]: item["count"] for item in modality_distribution if item.get("modality")}
 
     else:
-        # 默认：只统计每个模态的最新版本数据
-        # 使用窗口函数找出每个模态的最新版本记录
+        # 默认：统计所有激活数据（不进行版本去重）
+        # 注：由于导入数据的checkitem_code有重复问题，暂不进行版本去重
         stats_sql = """
-            WITH latest_versions AS (
-                SELECT *,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY modality_name, checkitem_code
-                           ORDER BY
-                               CASE
-                                   WHEN version LIKE 'V%' THEN 1
-                                   ELSE 2
-                               END,
-                               version DESC
-                       ) as rn
-                FROM nlp_checkitem_standard
-                WHERE is_deleted = 0
-            )
             SELECT
                 COUNT(*) as total,
                 COUNT(DISTINCT modality_name) as modality_count,
                 COUNT(DISTINCT scope_name) as body_part_count
-            FROM latest_versions
-            WHERE rn = 1
+            FROM nlp_checkitem_standard
+            WHERE is_deleted = 0
         """
         result = await session.execute(text(stats_sql))
         stats = dict(result.mappings().first())
 
         modality_sql = """
-            WITH latest_versions AS (
-                SELECT *,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY modality_name, checkitem_code
-                           ORDER BY
-                               CASE
-                                   WHEN version LIKE 'V%' THEN 1
-                                   ELSE 2
-                               END,
-                               version DESC
-                       ) as rn
-                FROM nlp_checkitem_standard
-                WHERE is_deleted = 0
-            )
             SELECT modality_name as modality, COUNT(*) as count
-            FROM latest_versions
-            WHERE rn = 1
-            GROUP BY modality_name ORDER BY count DESC
+            FROM nlp_checkitem_standard
+            WHERE is_deleted = 0
+            GROUP BY modality_name
+            ORDER BY count DESC
         """
         result = await session.execute(text(modality_sql))
         modality_distribution = [dict(row._mapping) for row in result]
         by_modality = {item["modality"]: item["count"] for item in modality_distribution if item.get("modality")}
 
-    # 一级部位分布 Top 10（始终使用最新版本）
+    # 一级部位分布 Top 10
     body_sql = """
-        WITH latest_versions AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY modality_name, checkitem_code
-                       ORDER BY
-                           CASE
-                               WHEN version LIKE 'V%' THEN 1
-                               ELSE 2
-                           END,
-                           version DESC
-                   ) as rn
-            FROM nlp_checkitem_standard
-            WHERE is_deleted = 0
-        )
         SELECT scope_name as body_part_l1, COUNT(*) as count
-        FROM latest_versions
-        WHERE rn = 1 AND scope_name IS NOT NULL
-        GROUP BY scope_name ORDER BY count DESC LIMIT 10
+        FROM nlp_checkitem_standard
+        WHERE is_deleted = 0 AND scope_name IS NOT NULL
+        GROUP BY scope_name
+        ORDER BY count DESC LIMIT 10
     """
     body_res = await session.execute(text(body_sql))
     by_body_part = {row[0]: row[1] for row in body_res}
