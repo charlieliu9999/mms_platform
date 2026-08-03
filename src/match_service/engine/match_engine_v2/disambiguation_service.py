@@ -412,11 +412,19 @@ class DisambiguationService:
             body = self._normalize_vascular_body(body, raw, vessel_type)
             node.std_names[body_idx] = body
 
+            # Phase 2 改进：支持动静脉组合扫描方式
             if modality == 'CT':
-                scan = ('静脉血管成像(CTV)' if vessel_type == 'vein'
-                        else '动脉血管成像(CTA)')
+                if vessel_type == 'both':
+                    scan = '动静脉血管成像(CTA+CTV)'
+                elif vessel_type == 'vein':
+                    scan = '静脉血管成像(CTV)'
+                else:
+                    scan = '动脉血管成像(CTA)'
             else:
-                if vessel_type == 'vein':
+                if vessel_type == 'both':
+                    scan = ('动静脉血管增强成像(CE-MRA+CE-MRV)' if enhanced
+                            else '动静脉血管成像(MRA+MRV)')
+                elif vessel_type == 'vein':
                     scan = ('静脉血管增强成像(CE-MRV)' if enhanced
                             else '静脉血管成像(MRV)')
                 else:
@@ -445,24 +453,51 @@ class DisambiguationService:
 
     def _detect_vascular_type(self, raw: str, scan_text: str,
                               body: str = '') -> str:
-        if re.search(r'静脉|CTV|MRV', raw):
+        """检测血管类型：artery（动脉）、vein（静脉）、both（动静脉双期）"""
+        # Phase 2 改进：支持动静脉组合检测
+        has_artery_raw = bool(re.search(r'动脉|CTA|MRA|冠脉|冠状动脉', raw))
+        has_vein_raw = bool(re.search(r'静脉|CTV|MRV', raw))
+
+        # 检测动静脉组合的关键词
+        if re.search(r'动静脉|CTA\+CTV|CTV\+CTA|MRA\+MRV|MRV\+MRA|双期', raw):
+            return 'both'
+
+        # 如果同时包含动脉和静脉关键词，判定为组合
+        if has_artery_raw and has_vein_raw:
+            return 'both'
+
+        # 单一类型检测（保留原逻辑）
+        if has_vein_raw:
             return 'vein'
-        if re.search(r'动脉|CTA|MRA|冠脉|冠状动脉', raw):
+        if has_artery_raw:
             return 'artery'
+
+        # 从部位名称判断
         has_vein_body = '静脉' in body
         has_artery_body = '动脉' in body
         if has_vein_body and not has_artery_body:
             return 'vein'
         if has_artery_body:
             return 'artery'
+
+        # 从扫描方式判断
         has_vein_scan = bool(re.search(r'静脉|CTV|MRV', scan_text))
         has_artery_scan = bool(re.search(r'动脉|CTA|MRA', scan_text))
         if has_vein_scan and not has_artery_scan:
             return 'vein'
+
         return 'artery'
 
     def _normalize_vascular_body(self, body: str, raw: str,
                                  vessel_type: str) -> str:
+        """归一化血管部位名称
+
+        Phase 2 改进：vessel_type='both' 时保留原部位名称（通常是通用部位）
+        """
+        # 动静脉组合时，保留原部位名（如"腹部血管"而非"腹部动脉/静脉"）
+        if vessel_type == 'both':
+            return body
+
         for pattern, artery, vein in self._VASCULAR_BODY_RULES:
             if re.search(pattern, raw):
                 if vessel_type == 'vein' and vein is not None:
