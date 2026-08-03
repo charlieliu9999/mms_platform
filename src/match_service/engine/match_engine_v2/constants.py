@@ -14,19 +14,59 @@ VERSION_FALLBACK: Dict[str, List[str]] = {
 # 注：CBCT/CBBCT/4DCT/双能CT 已提升为独立模态（见 modality_inference.classify_special_ct），
 # 不再在此作为「不可匹配标记」拦截，避免与模态识别语义冲突。
 SPECIAL_ITEM_MARKERS: Dict[str, str] = {
+    # 放疗相关
     '放疗定位': 'radiotherapy_sim',
     '放疗模拟': 'radiotherapy_sim',
     '模拟定位': 'radiotherapy_sim',
     'IGRT': 'igrt',
+
+    # 穿刺活检
     '临床操作': 'clinical_op',
     '穿刺定位': 'biopsy',
     '穿刺活检': 'biopsy',
     '活检': 'biopsy',
+
+    # 介入治疗（Phase 1 扩展）
     '介入': 'intervention',
+    '栓塞术': 'intervention',
+    '支架置入': 'intervention',
+    '溶栓': 'intervention',
+    '取栓': 'intervention',
+    '球囊扩张': 'intervention',
+    '血管成形': 'intervention',
+    '经导管': 'intervention',
+
+    # 影像引导
     '引导下': 'image_guided',
     'CT引导': 'image_guided',
     'MR引导': 'image_guided',
-    '乳管镜': 'ductoscopy',
+
+    # 非影像检查（Phase 1 扩展）
+    '心电图': 'non_imaging',
+    'ECG': 'non_imaging',
+    'EKG': 'non_imaging',
+    '脑电图': 'non_imaging',
+    'EEG': 'non_imaging',
+    '肌电图': 'non_imaging',
+    'EMG': 'non_imaging',
+    '质谱': 'non_imaging',
+    '串联质谱': 'non_imaging',
+    '干血斑': 'non_imaging',
+
+    # 口腔专科（Phase 1 扩展）
+    '根尖片': 'dental',
+    '全景片': 'dental',
+    '曲面体层': 'dental',
+    '口内': 'dental',
+
+    # 内镜检查
+    '乳管镜': 'endoscopy',
+    '胃镜': 'endoscopy',
+    '肠镜': 'endoscopy',
+    '内镜': 'endoscopy',
+
+    # 手术相关
+    '手术': 'surgery',
 }
 
 UNMATCHABLE_MARKERS: FrozenSet[str] = frozenset(SPECIAL_ITEM_MARKERS.keys())

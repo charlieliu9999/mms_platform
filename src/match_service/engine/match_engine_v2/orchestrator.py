@@ -132,14 +132,40 @@ class MatchEngineOrchestrator:
             - reason_code 命中时为 SPECIAL_ITEM_MARKERS 的标识（如 biopsy/intervention），
               供未匹配原因分类（Phase 1）使用；未命中为 ''。
 
-        注：仅 NLP 模态在此拦截；关键词引擎（US/SPECT/PET/OCT/DSA）有各自的
-        unmatchable 词表，在引擎内部处理。
+        注：
+        - Phase 1 改进：所有模态都检查 unmatchable 标记
+        - NLP 模态（CT/MR/DR/RF/MG）：检查所有标记
+        - 关键词引擎模态（US/SPECT/PET/OCT/DSA）：仅检查非影像、口腔、内镜标记
+        - 不支持模态（XR/CBCT/ES/SURG等）：检查所有标记
         """
-        if modality not in self.NLP_MODALITIES:
-            return False, ''
+        # 非影像检查标记（适用于所有模态）
+        NON_IMAGING_MARKERS = {
+            'non_imaging', 'dental', 'endoscopy', 'surgery'
+        }
+
+        # 检查所有标记
         for marker in self.UNMATCHABLE_MARKERS:
             if marker in record:
-                return True, SPECIAL_ITEM_MARKERS[marker]
+                reason = SPECIAL_ITEM_MARKERS[marker]
+
+                # NLP 模态：所有标记都拦截
+                if modality in self.NLP_MODALITIES:
+                    return True, reason
+
+                # 关键词引擎模态：仅拦截非影像类标记 + DSA的介入标记
+                if modality in self.KW_MODALITIES:
+                    if reason in NON_IMAGING_MARKERS:
+                        return True, reason
+                    if modality == 'DSA' and reason == 'intervention':
+                        return True, reason
+                    # 其他标记（如 biopsy, radiotherapy）跳过，让引擎处理
+                    continue
+
+                # 不支持模态（XR/CBCT/ES/SURG等）：所有标记都拦截
+                # 这样可以识别出这些模态中的非影像检查
+                if modality not in self.SUPPORTED_MODALITIES:
+                    return True, reason
+
         return False, ''
 
     def match(self, record: str, modality: str, version: str = "V3.8.2",
@@ -401,20 +427,20 @@ class MatchEngineOrchestrator:
             modality = item.get('modality', '')
             name = item.get('name', '')
 
-            # 不支持模态（含特殊 CT/非影像）：无引擎实体信号，reason 留空，
-            # 由 backend 按模态推导（特殊 CT→standard_lib_gap，非影像→unmatchable）。
+            # Phase 1 改进：优先检查 unmatchable 标记（所有模态，包括不支持的）
+            # 这样可以正确识别 XR/CBCT/ES/SURG 等模态中的非影像检查
+            if name:
+                is_unmatchable, reason = self._check_unmatchable(name, modality)
+                if is_unmatchable:
+                    result[key] = {'pairs': [], 'score': 0, 'tier': 'none',
+                                   'confidence': 0.0, 'reason': reason,
+                                   'has_entity': None}
+                    continue
+
+            # 不支持模态（无 unmatchable 标记）：无引擎实体信号，reason 留空
             if not name or modality not in self.SUPPORTED_MODALITIES:
                 result[key] = {'pairs': [], 'score': 0, 'tier': 'none',
                                'confidence': 0.0, 'reason': '', 'has_entity': None}
-                continue
-
-            # 特殊医嘱标识检查（统一守卫；关键词引擎有自己的 unmatchable 词表）
-            # 保留 reason（穿刺/介入/放疗等标识），供 backend 判 unmatchable_by_design。
-            is_unmatchable, reason = self._check_unmatchable(name, modality)
-            if is_unmatchable:
-                result[key] = {'pairs': [], 'score': 0, 'tier': 'none',
-                               'confidence': 0.0, 'reason': reason,
-                               'has_entity': None}
                 continue
 
             try:
