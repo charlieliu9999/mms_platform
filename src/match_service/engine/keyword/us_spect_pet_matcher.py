@@ -449,7 +449,8 @@ class USSpectPetMatcher:
                 "body_part_l3, scan_method "
                 "FROM standard_check_items "
                 "WHERE modality IN ('US', 'SPECT', 'PET/CT', 'PET/MR', 'OCT', 'DSA') "
-                "AND is_active = true"
+                "AND is_active = true "
+                "ORDER BY modality, item_code"
             ))
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=[

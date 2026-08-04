@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..db import get_session_factory
 
@@ -1079,4 +1079,232 @@ async def update_unmatched_status(
     await session.commit()
 
     return {"message": "状态已更新", "id": unmatched_id, "status": status}
+
+
+# ─── Phase 4: 检查项目匹配测试中心 ─────────────────────────────────────────
+#
+# 数据源：procedure_dictionary（检查项目字典，active≈4555 条），
+# 通过 unmatched_registry（procedure_id 唯一）承载未匹配状态与归因。
+
+
+@router.get("/procedure-items")
+async def list_procedure_items(
+    modality: Optional[str] = Query(None, description="模态过滤（原始值）"),
+    search: Optional[str] = Query(None, description="名称搜索"),
+    limit: int = Query(6000, ge=1, le=6000),
+    session: AsyncSession = Depends(_get_session),
+):
+    """列出检查项目字典（procedure_dictionary）及其未匹配状态。
+
+    返回全量 active 项目（含 unmatched_registry 的 open 状态与归因），
+    以及按模态聚合的统计，供前端"匹配测试中心"分组/过滤/批量匹配。
+    """
+    where = ["pd.is_active = true"]
+    params: Dict[str, Any] = {}
+    if modality:
+        where.append("pd.modality = :modality")
+        params["modality"] = modality
+    if search:
+        where.append("pd.name_zh ILIKE :search")
+        params["search"] = f"%{search}%"
+    where_sql = " AND ".join(where)
+
+    items_sql = text(f"""
+        SELECT pd.id, pd.semantic_id, pd.name_zh,
+               UPPER(pd.modality) AS modality,
+               ur.status AS um_status, ur.reason_code AS um_reason
+        FROM procedure_dictionary pd
+        LEFT JOIN unmatched_registry ur ON ur.procedure_id = pd.id
+        WHERE {where_sql}
+        ORDER BY pd.modality, pd.id
+        LIMIT :limit
+    """)
+    params["limit"] = limit
+    rows = (await session.execute(items_sql, params)).mappings().all()
+
+    items = [
+        {
+            "id": r["id"],
+            "semantic_id": r["semantic_id"],
+            "name_zh": r["name_zh"] or "",
+            "modality": r["modality"] or "UNKNOWN",
+            "um_status": r["um_status"],
+            "um_reason": r["um_reason"],
+        }
+        for r in rows
+    ]
+
+    # 模态统计（不受 modality 过滤影响，始终给出全貌；受 search 影响）
+    stats_where = ["pd.is_active = true"]
+    stats_params: Dict[str, Any] = {}
+    if search:
+        stats_where.append("pd.name_zh ILIKE :search")
+        stats_params["search"] = f"%{search}%"
+    stats_sql = text(f"""
+        SELECT UPPER(pd.modality) AS modality,
+               COUNT(*) AS total,
+               COUNT(ur.id) FILTER (WHERE ur.status = 'open') AS unmatched
+        FROM procedure_dictionary pd
+        LEFT JOIN unmatched_registry ur ON ur.procedure_id = pd.id
+        WHERE {' AND '.join(stats_where)}
+        GROUP BY UPPER(pd.modality)
+        ORDER BY total DESC
+    """)
+    stats_rows = (await session.execute(stats_sql, stats_params)).mappings().all()
+    modality_stats = {
+        (r["modality"] or "UNKNOWN"): {"total": r["total"], "unmatched": r["unmatched"]}
+        for r in stats_rows
+    }
+
+    return {"items": items, "total": len(items), "modality_stats": modality_stats}
+
+
+class MatchProceduresRequest(BaseModel):
+    """批量匹配检查项目请求"""
+    procedure_ids: List[int] = Field(..., description="procedure_dictionary.id 列表")
+
+
+def _classify_unmatched(result: Dict[str, Any]) -> "tuple[str, str]":
+    """根据引擎匹配结果归因 reason_code（对齐 unmatched_registry 既有语义）。
+
+    依据引擎返回的 has_entity 信号：
+    - has_entity=None  → unmatchable 标记命中 / 不支持模态 → unmatchable_by_design
+    - has_entity=True  → 解析出医学实体但标准库无对应 → standard_lib_gap
+    - has_entity=False → 未解析出医学实体（词库未覆盖）→ lexicon_gap
+    """
+    tier = result.get("tier", "none")
+    has_entity = result.get("has_entity")
+    if tier == "error":
+        return "engine_error", result.get("reason") or "引擎异常"
+    if tier == "ambiguous":
+        return "standard_lib_gap", "多候选歧义，标准库存在多个候选"
+    if has_entity is None:
+        reason = result.get("reason") or ""
+        return "unmatchable_by_design", (f"unmatchable:{reason}" if reason else "tier=none")
+    if has_entity:
+        return "standard_lib_gap", "解析出医学实体，标准库无对应项"
+    return "lexicon_gap", "未解析出医学实体（词库未覆盖）"
+
+
+def _extract_standards(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """从引擎结果 data[].standard[] 结构提取标准项（code/name）。"""
+    standards: List[Dict[str, Any]] = []
+    for d in result.get("data", []) or []:
+        if not isinstance(d, dict):
+            continue
+        std_list = d.get("standard")
+        if isinstance(std_list, list) and std_list:
+            for s in std_list:
+                if isinstance(s, dict):
+                    standards.append({"code": s.get("code"), "name": s.get("name")})
+        elif d.get("item_code") or d.get("item_name"):
+            standards.append({"code": d.get("item_code"), "name": d.get("item_name")})
+    return standards
+
+
+@router.post("/match-procedures")
+async def match_procedures(
+    request: MatchProceduresRequest,
+    session: AsyncSession = Depends(_get_session),
+):
+    """对指定检查项目批量执行匹配，并将未匹配结果回写 unmatched_registry。
+
+    - 已匹配：若此前登记为 open，则置为 resolved
+    - 未匹配：upsert 为 open，并按 has_entity/tier 归因 reason_code
+    前端按 chunk 分批调用以控制单次耗时。
+    """
+    from ..core.dispatcher import MatchDispatcher
+    from ..core.engine_holder import get_engine_holder
+
+    holder = get_engine_holder()
+    if not holder.is_ready:
+        raise HTTPException(status_code=503, detail="引擎未就绪")
+    dispatcher = MatchDispatcher(session, holder)
+
+    ids = list(dict.fromkeys(request.procedure_ids))[:400]  # 去重 + 单次上限
+    if not ids:
+        return {"total_processed": 0, "matched_count": 0, "unmatched_count": 0,
+                "by_modality": {}, "results": []}
+
+    rows = (await session.execute(
+        text("SELECT id, semantic_id, name_zh, modality FROM procedure_dictionary WHERE id = ANY(:ids)"),
+        {"ids": ids},
+    )).mappings().all()
+
+    results: List[Dict[str, Any]] = []
+    registry_ops: List[Dict[str, Any]] = []
+    matched_count = 0
+    by_modality: Dict[str, Dict[str, int]] = {}
+
+    for r in rows:
+        pid = r["id"]
+        name = r["name_zh"] or ""
+        mod_raw = r["modality"] or ""
+        mod_upper = mod_raw.upper() or "UNKNOWN"
+
+        result = await dispatcher.match(name, mod_raw)
+        tier = result.get("tier", "none")
+        standards = _extract_standards(result)
+        matched = result.get("num_standard", 0) > 0 and tier in ("exact", "partial", "degraded")
+
+        slot = by_modality.setdefault(mod_upper, {"total": 0, "matched": 0, "unmatched": 0})
+        slot["total"] += 1
+
+        entry: Dict[str, Any] = {
+            "procedure_id": pid,
+            "semantic_id": r["semantic_id"],
+            "name_zh": name,
+            "modality": mod_upper,
+            "matched": matched,
+            "tier": tier,
+            "confidence": result.get("confidence", 0.0),
+            "engine": result.get("engine"),
+            "standards": standards,
+        }
+
+        if matched:
+            matched_count += 1
+            slot["matched"] += 1
+            registry_ops.append({"pid": pid, "action": "resolve"})
+        else:
+            slot["unmatched"] += 1
+            reason, detail = _classify_unmatched(result)
+            entry["reason_code"] = reason
+            entry["detail"] = detail
+            registry_ops.append({
+                "pid": pid, "action": "upsert", "modality": mod_upper,
+                "reason": reason, "detail": detail,
+            })
+        results.append(entry)
+
+    # 回写 unmatched_registry（procedure_id 唯一索引，安全 upsert）
+    for op in registry_ops:
+        if op["action"] == "upsert":
+            await session.execute(text("""
+                INSERT INTO unmatched_registry
+                    (procedure_id, modality, reason_code, detail, status, created_at, updated_at)
+                VALUES (:pid, :modality, :reason, :detail, 'open', NOW(), NOW())
+                ON CONFLICT (procedure_id) DO UPDATE SET
+                    modality = EXCLUDED.modality,
+                    reason_code = EXCLUDED.reason_code,
+                    detail = EXCLUDED.detail,
+                    status = 'open',
+                    updated_at = NOW()
+            """), {"pid": op["pid"], "modality": op["modality"],
+                   "reason": op["reason"], "detail": op["detail"]})
+        else:
+            await session.execute(text("""
+                UPDATE unmatched_registry
+                SET status = 'resolved', handled_at = NOW(), updated_at = NOW()
+                WHERE procedure_id = :pid AND status = 'open'
+            """), {"pid": op["pid"]})
+    await session.commit()
+
+    return {
+        "total_processed": len(results),
+        "matched_count": matched_count,
+        "unmatched_count": len(results) - matched_count,
+        "by_modality": by_modality,
+        "results": results,
+    }
 

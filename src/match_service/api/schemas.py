@@ -1,18 +1,38 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class MatchRequest(BaseModel):
-    name: str = Field(..., description="检查项目原始文本")
+    name: Optional[str] = Field(default=None, description="检查项目原始文本")
+    text: Optional[str] = Field(default=None, description="检查项目原始文本（name 的别名，兼容历史调用方）")
     modality: str = Field(..., description="影像模态 (CT/MR/DR/US/SPECT/PET/CT 等)")
     version: str = Field(default="V3.8.2", description="规则版本")
 
+    @model_validator(mode="after")
+    def _check_name_or_text(self):
+        if not (self.name or self.text):
+            raise ValueError("name 或 text 至少提供一个")
+        if not self.name:
+            self.name = self.text
+        return self
+
 
 class BatchItem(BaseModel):
-    key: str = Field(..., description="业务唯一标识")
-    name: str = Field(..., description="检查项目原始文本")
+    key: Optional[str] = Field(default=None, description="业务唯一标识（缺省时用 name 填充）")
+    name: Optional[str] = Field(default=None, description="检查项目原始文本")
+    text: Optional[str] = Field(default=None, description="检查项目原始文本（name 的别名）")
     modality: str = Field(..., description="影像模态")
+
+    @model_validator(mode="after")
+    def _check_name_or_text(self):
+        if not (self.name or self.text):
+            raise ValueError("name 或 text 至少提供一个")
+        if not self.name:
+            self.name = self.text
+        if not self.key:
+            self.key = self.name
+        return self
 
 
 class BatchRequest(BaseModel):

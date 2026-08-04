@@ -121,8 +121,8 @@ start_services() {
     echo "  日志文件: logs/backend.log"
     sleep 3
 
-    # 检查后端是否启动成功
-    if curl -s http://localhost:9100/health > /dev/null 2>&1; then
+    # 检查后端是否启动成功（健康检查真实路径为 /api/health，-f 确保 4xx/5xx 判定为失败）
+    if curl -sf http://localhost:9100/api/health > /dev/null 2>&1; then
         echo -e "  ${GREEN}✓ 后端启动成功${NC}"
     else
         echo -e "  ${RED}✗ 后端启动失败，请查看日志${NC}"

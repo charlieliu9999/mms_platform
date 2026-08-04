@@ -7,7 +7,6 @@ import Dashboard from './pages/Dashboard';
 import MatchTest from './pages/MatchTest';
 import LexiconMgmt from './pages/LexiconMgmt';
 import StandardItems from './pages/StandardItems';
-import UnmatchedWorkbench from './pages/UnmatchedWorkbench';
 import EvaluationDashboard from './pages/Evaluation/Dashboard';
 import CreateTask from './pages/Evaluation/CreateTask';
 import TaskDetail from './pages/Evaluation/TaskDetail';
@@ -101,7 +100,8 @@ const App: React.FC = () => {
                 <Route path="/lexicon" element={<LexiconMgmt />} />
                 <Route path="/standard-items" element={<StandardItems />} />
                 <Route path="/check-standard-items" element={<StandardItems />} />
-                <Route path="/unmatched" element={<UnmatchedWorkbench />} />
+                {/* 未匹配工作台已并入匹配测试中心，此路由直达其"未匹配分析"页签 */}
+                <Route path="/unmatched" element={<MatchTest initialTab="unmatched" />} />
                 <Route path="/evaluation" element={<EvaluationDashboard />} />
                 <Route path="/evaluation/create" element={<CreateTask />} />
                 <Route path="/evaluation/tasks/:taskId" element={<TaskDetail />} />

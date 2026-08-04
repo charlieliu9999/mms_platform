@@ -19,14 +19,12 @@ export default function StandardItems() {
   const [items, setItems] = useState<StandardItem[]>([]);
   const [total, setTotal] = useState<number>(0);
 
-  // 聚合统计
+  // 聚合统计（F-05：初始为空，全部由真实 stats 接口填充）
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
-  const [statsTotal, setStatsTotal] = useState<number>(18695);
-  const [statsModalityCount, setStatsModalityCount] = useState<number>(11);
-  const [statsBodyPartCount, setStatsBodyPartCount] = useState<number>(24);
-  const [byModality, setByModality] = useState<Record<string, number>>({
-    CT: 548, MR: 480, US: 443, DR: 234, RF: 54, MG: 51, SPECT: 48, DSA: 28, 'PET/MR': 12, 'PET/CT': 12, OCT: 6,
-  });
+  const [statsTotal, setStatsTotal] = useState<number>(0);
+  const [statsModalityCount, setStatsModalityCount] = useState<number>(0);
+  const [statsBodyPartCount, setStatsBodyPartCount] = useState<number>(0);
+  const [byModality, setByModality] = useState<Record<string, number>>({});
 
   const loadStats = useCallback(async () => {
     try {
@@ -158,7 +156,7 @@ export default function StandardItems() {
       width: 100,
       render: (ver: string) => (
         <span className="text-xs font-mono text-text-secondary">
-          {ver || selectedVersion || 'V3.8.2'}
+          {ver || selectedVersion || '-'}
         </span>
       ),
     },
@@ -294,9 +292,7 @@ export default function StandardItems() {
             }}
           >
             <Select.Option value="ALL">全部版本 (All)</Select.Option>
-            {availableVersions.length > 0
-              ? availableVersions.map((v) => <Select.Option key={v} value={v}>{v}</Select.Option>)
-              : ['V3.8.2', 'V3.8.1', 'V3.8.0'].map((v) => <Select.Option key={v} value={v}>{v}</Select.Option>)}
+            {availableVersions.map((v) => <Select.Option key={v} value={v}>{v}</Select.Option>)}
           </Select>
           {(selectedVersion || selectedModality !== 'ALL' || search) && (
             <Button size="small" icon={<ReloadOutlined />} onClick={handleResetFilters}>

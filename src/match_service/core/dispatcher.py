@@ -142,7 +142,16 @@ class MatchDispatcher:
             name = item.get("name", "")
             modality = item.get("modality", "")
 
-            result = await self.match(name, modality, version)
+            try:
+                result = await self.match(name, modality, version)
+            except Exception as e:
+                logger.error(
+                    f"batch_match 单项失败: key={key!r}, name={name!r}, "
+                    f"modality={modality!r}: {e}"
+                )
+                results[key] = {"error": str(e), "_tier": "error"}
+                continue
+
             results[key] = result
 
             if result.get("_cache_hit"):
@@ -162,20 +171,35 @@ class MatchDispatcher:
         }
 
     async def _record_feedback(self, text: str, modality: str, result: dict):
-        """记录未匹配 feedback 供 L3 Agent 异步处理"""
+        """记录未匹配 feedback 供 L3 Agent 异步处理
+
+        B-16: 使用 upsert 而非普通 INSERT。
+        match_feedback 表已有 (text_hash, modality) 唯一约束
+        （迁移 20260804_0200），同一文本重复反馈时更新而非报唯一冲突。
+        """
         from ..cache.models import MatchCache, MatchFeedback
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         text_hash = MatchCache.compute_hash(text, modality)
-        feedback = MatchFeedback(
-            text_hash=text_hash,
-            modality=modality.upper(),
-            original_text=text,
-            engine_result_json=MatchCache.make_result_json(result),
-            engine_tier=result.get("tier", "none"),
-            feedback_type="unmatched",
-            status="pending",
+        values = {
+            "text_hash": text_hash,
+            "modality": modality.upper(),
+            "original_text": text,
+            "engine_result_json": MatchCache.make_result_json(result),
+            "engine_tier": result.get("tier", "none"),
+            "feedback_type": "unmatched",
+            "status": "pending",
+        }
+        stmt = pg_insert(MatchFeedback).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["text_hash", "modality"],
+            set_={
+                "original_text": stmt.excluded.original_text,
+                "engine_result_json": stmt.excluded.engine_result_json,
+                "engine_tier": stmt.excluded.engine_tier,
+            },
         )
-        self.session.add(feedback)
+        await self.session.execute(stmt)
         await self.session.commit()
 
     @staticmethod

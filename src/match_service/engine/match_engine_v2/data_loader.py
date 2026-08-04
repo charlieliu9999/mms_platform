@@ -13,6 +13,9 @@ from .constants import VERSION_FALLBACK
 
 logger = logging.getLogger(__name__)
 
+# B-18修复：进程全局追踪已注册到 jieba 的词条（跨 reload 实例持久化）
+_jieba_registered_words: set = set()
+
 
 class RuleDataLoader:
     """规则数据加载器，负责从数据库加载所有规则表"""
@@ -46,12 +49,22 @@ class RuleDataLoader:
 
     async def _load_medical_dict(self, conn):
         """加载医学词典"""
+        global _jieba_registered_words
+
         result = await conn.execute(text(
             "SELECT word, type FROM nlp_medical_dict WHERE enable = 0"
         ))
         rows = result.fetchall()
         self.mdict = {r[0]: r[1] for r in rows}
+        current_words = set(self.mdict.keys())
         logger.info(f"[RuleDataLoader] 加载医学词典: {len(self.mdict)} 词条")
+
+        # B-18修复：热重载时，将已删除的词条从 jieba 全局词典中移除
+        removed = _jieba_registered_words - current_words
+        if removed:
+            for word in removed:
+                jieba.del_word(word)
+            logger.info(f"[RuleDataLoader] 热重载移除词条: {len(removed)} 个")
 
         # 注册到 jieba（组合词汇使用更高词频，确保不被拆分）
         for word, wtype in self.mdict.items():
@@ -61,6 +74,14 @@ class RuleDataLoader:
             else:
                 freq = 883635
             jieba.add_word(word, tag=wtype, freq=freq)
+
+        # 更新全局注册表
+        _jieba_registered_words.clear()
+        _jieba_registered_words.update(current_words)
+        logger.info(
+            f"[RuleDataLoader] 更新全局注册表: {len(_jieba_registered_words)} 词条 "
+            f"(对象id={id(_jieba_registered_words)})"
+        )
 
     async def _load_phrase_map(self, conn):
         """加载同义词/别名映射"""
@@ -158,6 +179,13 @@ class RuleDataLoader:
         df_all['device_type_name'] = ''
 
         df_all.fillna("", inplace=True)
+
+        # ACR 导入数据用 "-" 表示"无值"（post_processing 947 行、scan_method 244 行），
+        # 统一归一化为空串；否则 _query_ct_mr 的 scan 分支要求 post 为空串/NaN，
+        # 会漏掉 post='-' 的行（如 MR颅内动脉血管成像(MRA) 无法命中）
+        for col in ('three_level_name', 'position_name', 'scan_name', 'post_processing_name'):
+            df_all[col] = df_all[col].replace('-', '')
+
         logger.info(f"[RuleDataLoader] 加载标准项目（从 standard_check_items）: {len(df_all)} 条")
 
         # 按模态+版本分组

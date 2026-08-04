@@ -28,7 +28,7 @@ const Sidebar: React.FC = () => {
     {
       key: '/match',
       icon: <SearchOutlined />,
-      label: '匹配测试',
+      label: '匹配测试中心',
     },
     {
       key: '/lexicon',

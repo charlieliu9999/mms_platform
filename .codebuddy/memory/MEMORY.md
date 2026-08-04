@@ -32,9 +32,16 @@ exact(1.0) / partial(0.8) / degraded(0.6) / ambiguous(0.4) / none(0.0) / error(0
 - 查询有3级降级：POSITION_FALLBACK → POSITION_DECOMPOSE → POSITION_CONTAINS
 
 ### 数据表
-- nlp_medical_dict(2,435) / nlp_phrase_map(7,839) / nlp_ambiguity(1,229) / nlp_checkitem_standard
-- keyword_match_rules（关键词引擎单一真相源）
+- nlp_medical_dict(2,435) / nlp_phrase_map(7,839) / nlp_ambiguity(1,229)
+- nlp_checkitem_standard 已改名 nlp_checkitem_standard_deprecated（迁移 20260804_1200），standard_check_items 为唯一标准表
+- standard_check_items：item_code 全局唯一（uq_standard_items_code），version 仅为导入批次标签；迁移 20260804_1300 后全部 12 模态统一挂 V3.8.2（1983 条；备份表 standard_items_version_backup_20260804）；V2.0 剩 28 条院标 DSA、V1.0-imported 剩 4 条院标 MG 为旧版重复数据
+- keyword_match_rules（关键词引擎单一真相源）；关键词引擎按 modality+is_active 加载 standard_check_items，不过滤 version
 - DR 标准项从 X线模态按 device_type_name 过滤派生
+
+### /api/match 返回结构（2026-08-04 确认）
+- result.data: [{raw, standard: [{code, name}]}] 嵌套结构（NLP 与关键词引擎一致）
+- score 是 0-10 分制（10 - factor_composite），confidence 是 0-1 tier 值；前端展示百分比应用 confidence*100
+- 顶层另有 check_item/num_standard/tier/engine/cached/version；无 standard_code/standard_name 顶层字段
 
 ## 算法漏洞修复状态（2026-08-02）
 

@@ -38,10 +38,12 @@ const Dashboard: React.FC = () => {
     adminAPI.getStats().then(setStats).catch(() => {});
   }, []);
 
-  const totalDict = stats?.total_medical_dict || (stats as any)?.tables?.nlp_medical_dict?.total || 2427;
-  const totalPhrase = stats?.total_phrase_map || (stats as any)?.tables?.nlp_phrase_map?.total || 7858;
-  const totalAmbiguity = stats?.total_ambiguity || (stats as any)?.tables?.nlp_ambiguity?.total || 1158;
-  const totalStandard = stats?.total_standard_items || (stats as any)?.tables?.nlp_checkitem_standard?.total || 18695;
+  // F-04: 全部来自真实 stats 接口，不再使用硬编码假保底值
+  const totalDict = stats?.total_medical_dict ?? (stats as any)?.tables?.nlp_medical_dict?.total ?? 0;
+  const totalPhrase = stats?.total_phrase_map ?? (stats as any)?.tables?.nlp_phrase_map?.total ?? 0;
+  const totalAmbiguity = stats?.total_ambiguity ?? (stats as any)?.tables?.nlp_ambiguity?.total ?? 0;
+  const totalStandard = stats?.total_standard_items ?? (stats as any)?.tables?.nlp_checkitem_standard?.total ?? 0;
+  const enabledStandard = (stats as any)?.tables?.nlp_checkitem_standard?.enabled ?? 0;
 
   const topCards = [
     {
@@ -83,30 +85,21 @@ const Dashboard: React.FC = () => {
   } else if (stats?.modality_distribution && typeof stats.modality_distribution === 'object') {
     modalityMap = stats.modality_distribution as Record<string, number>;
   }
-  if (Object.keys(modalityMap).length === 0) {
-    modalityMap = { CT: 548, MR: 480, US: 443, DR: 234, RF: 54, MG: 51, SPECT: 48, DSA: 28, 'PET/MR': 12, 'PET/CT': 12, OCT: 6 };
-  }
-  const totalStandardCount = Object.values(modalityMap).reduce((a, b) => a + b, 0) || 1;
+  const totalStandardCount = Object.values(modalityMap).reduce((a, b) => a + b, 0);
 
   // 词典分类
   let dictMap: Record<string, number> = {};
   if (stats?.dict_type_distribution && typeof stats.dict_type_distribution === 'object') {
     dictMap = stats.dict_type_distribution;
   }
-  if (Object.keys(dictMap).length === 0) {
-    dictMap = { body: 1150, scan: 480, post: 320, position: 285, device: 140, scope: 52 };
-  }
-  const totalDictCount = Object.values(dictMap).reduce((a, b) => a + b, 0) || 1;
+  const totalDictCount = Object.values(dictMap).reduce((a, b) => a + b, 0);
 
   // 未匹配分类
   let unmatchedMap: Record<string, number> = {};
   if (stats?.unmatched_distribution && typeof stats.unmatched_distribution === 'object') {
     unmatchedMap = stats.unmatched_distribution;
   }
-  if (Object.keys(unmatchedMap).length === 0) {
-    unmatchedMap = { lexicon_gap: 28, standard_lib_gap: 15, needs_manual: 8, engine_error: 2 };
-  }
-  const totalUnmatchedCount = Object.values(unmatchedMap).reduce((a, b) => a + b, 0) || 1;
+  const totalUnmatchedCount = Object.values(unmatchedMap).reduce((a, b) => a + b, 0);
 
   const isDark = document.documentElement.classList.contains('dark');
 
@@ -123,7 +116,7 @@ const Dashboard: React.FC = () => {
         </div>
         <div className="flex items-center gap-2.5 shrink-0">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-            规则版本: {stats?.rule_version || 'v30466-1f12fa6350d2'}
+            规则版本: {stats?.rule_version || '加载中…'}
           </span>
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50">
             <CheckCircleOutlined className="text-emerald-500" /> 引擎状态: 最佳
@@ -174,10 +167,13 @@ const Dashboard: React.FC = () => {
             }
           >
             <div className="space-y-3.5 py-1">
+              {Object.keys(modalityMap).length === 0 && (
+                <div className="text-center py-10 text-xs text-text-secondary">暂无模态分布数据</div>
+              )}
               {Object.entries(modalityMap)
                 .sort(([, a], [, b]) => b - a)
                 .map(([mod, count]) => {
-                  const percent = Math.round((count / totalStandardCount) * 100);
+                  const percent = totalStandardCount > 0 ? Math.round((count / totalStandardCount) * 100) : 0;
                   return (
                     <div key={mod} className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
@@ -214,9 +210,12 @@ const Dashboard: React.FC = () => {
             }
           >
             <div className="space-y-4">
+              {Object.keys(dictMap).length === 0 && (
+                <div className="text-center py-10 text-xs text-text-secondary">暂无词典分类数据</div>
+              )}
               {Object.entries(dictMap).map(([typeKey, count]) => {
                 const labelName = DICT_TYPE_NAMES[typeKey] || typeKey;
-                const percent = Math.round((count / totalDictCount) * 100);
+                const percent = totalDictCount > 0 ? Math.round((count / totalDictCount) * 100) : 0;
                 return (
                   <div key={typeKey} className="p-3 rounded-xl flex items-center justify-between bg-bg-subtle border border-border-theme">
                     <div>
@@ -255,9 +254,12 @@ const Dashboard: React.FC = () => {
             }
           >
             <div className="space-y-3">
+              {Object.keys(unmatchedMap).length === 0 && (
+                <div className="text-center py-10 text-xs text-text-secondary">暂无未匹配工单数据</div>
+              )}
               {Object.entries(unmatchedMap).map(([code, count]) => {
                 const meta = UNMATCHED_REASON_NAMES[code] || { label: code, color: 'text-slate-700 bg-slate-50 border-slate-200' };
-                const percent = Math.round((count / totalUnmatchedCount) * 100);
+                const percent = totalUnmatchedCount > 0 ? Math.round((count / totalUnmatchedCount) * 100) : 0;
                 return (
                   <div key={code} className={`p-3.5 rounded-xl border flex items-center justify-between ${meta.color}`}>
                     <div>
@@ -294,21 +296,22 @@ const Dashboard: React.FC = () => {
                   <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-400">RELEASED</span>
                 </div>
                 <div className="text-base font-extrabold font-mono tracking-tight text-brand-color">
-                  {stats?.rule_version || 'v30466-1f12fa6350d2'}
+                  {stats?.rule_version || '加载中…'}
                 </div>
                 <p className="text-[11px] m-0 text-text-secondary">
                   包含国家标准项目字典库、完整 Jieba 医学分词词典及异名消歧映射表，支持全模态实时诊断。
                 </p>
               </div>
 
+              {/* F-04: 以真实统计数据替换原硬编码性能指标 */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3 rounded-xl bg-bg-subtle border border-border-theme">
-                  <div className="text-[10px] text-text-secondary">词库加载效率</div>
-                  <div className="text-sm font-bold font-mono mt-0.5 text-emerald-600 dark:text-emerald-400">12ms (极速)</div>
+                  <div className="text-[10px] text-text-secondary">标准库生效条目</div>
+                  <div className="text-sm font-bold font-mono mt-0.5 text-emerald-600 dark:text-emerald-400">{enabledStandard.toLocaleString()} 条</div>
                 </div>
                 <div className="p-3 rounded-xl bg-bg-subtle border border-border-theme">
-                  <div className="text-[10px] text-text-secondary">未匹配收敛率</div>
-                  <div className="text-sm font-bold font-mono mt-0.5 text-brand-color">98.4% (高定性)</div>
+                  <div className="text-[10px] text-text-secondary">待处理未匹配工单</div>
+                  <div className="text-sm font-bold font-mono mt-0.5 text-brand-color">{totalUnmatchedCount} 件</div>
                 </div>
               </div>
 
