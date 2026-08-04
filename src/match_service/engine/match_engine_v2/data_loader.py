@@ -128,49 +128,57 @@ class RuleDataLoader:
         logger.info(f"[RuleDataLoader] 加载消歧规则: {len(self.df_body_disamb)} 条")
 
     async def _load_standard_table(self, conn):
-        """加载标准项目表"""
+        """加载标准项目表（B-08修复：统一从 standard_check_items 加载）"""
         result = await conn.execute(text(
-            "SELECT modality_name, scope_name, version, three_level_name, "
-            "scan_name, post_processing_name, position_name, device_type_name, "
-            "checkitem_code, checkitem_name "
-            "FROM nlp_checkitem_standard WHERE is_deleted = 0"
+            "SELECT modality, body_part_l3, scan_method, post_processing, "
+            "body_part_l2, version, item_code, item_name "
+            "FROM standard_check_items WHERE is_active = true"
         ))
         rows = result.fetchall()
+
+        # 字段映射：新表 → 旧表字段名（保持引擎内部逻辑不变）
         df_all = pd.DataFrame(rows, columns=[
-            'modality_name', 'scope_name', 'version', 'three_level_name',
-            'scan_name', 'post_processing_name', 'position_name', 'device_type_name',
-            'checkitem_code', 'checkitem_name'
+            'modality', 'body_part_l3', 'scan_method', 'post_processing',
+            'body_part_l2', 'version', 'item_code', 'item_name'
         ])
+
+        # 重命名为引擎期望的字段名
+        df_all.rename(columns={
+            'modality': 'modality_name',
+            'body_part_l3': 'three_level_name',
+            'body_part_l2': 'position_name',
+            'scan_method': 'scan_name',
+            'post_processing': 'post_processing_name',
+            'item_code': 'checkitem_code',
+            'item_name': 'checkitem_name'
+        }, inplace=True)
+
+        # 补充引擎需要但新表没有的字段
+        df_all['scope_name'] = ''
+        df_all['device_type_name'] = ''
+
         df_all.fillna("", inplace=True)
-        logger.info(f"[RuleDataLoader] 加载标准项目: {len(df_all)} 条")
+        logger.info(f"[RuleDataLoader] 加载标准项目（从 standard_check_items）: {len(df_all)} 条")
 
         # 按模态+版本分组
         self._build_standard_indexes(df_all)
 
     def _build_standard_indexes(self, df_all: pd.DataFrame):
-        """构建标准表索引"""
+        """构建标准表索引（B-08修复：兼容新表字段）"""
         # 独立模态：直接按 modality_name 分组
         # 注意：RF、PET/CT、PET/MR、SPECT 都是独立模态（modality_name直接等于模态名）
-        for modality in ['CT', 'MR', 'DSA', 'MG', 'RF', 'SPECT', 'PET/CT', 'PET/MR']:
-            df_mod = df_all[df_all['modality_name'] == modality]
+        for modality in ['CT', 'MR', 'DR', 'DSA', 'MG', 'RF', 'SPECT', 'PET/CT', 'PET/MR']:
+            df_mod = df_all[df_all['modality_name'] == modality].copy()
             if not df_mod.empty:
                 self.df_standard[modality] = {}
-                for ver in df_mod['version'].unique():
-                    self.df_standard[modality][ver] = df_mod[df_mod['version'] == ver].copy()
+                versions = df_mod['version'].fillna('').unique()
+                for ver in versions:
+                    if ver:  # 跳过空版本
+                        self.df_standard[modality][ver] = df_mod[df_mod['version'] == ver].copy()
                 logger.info(f"[RuleDataLoader] 加载 {modality} 标准: {len(df_mod)} 条")
 
-        # X线 按 device_type_name 拆分为 DR（表驱动）
-        # device_type_name 取值：DR/移动DR/床旁机/多功能X线机 → DR
-        df_xray = df_all[df_all['modality_name'] == 'X线']
-        if not df_xray.empty:
-            dev = df_xray['device_type_name'].fillna('')
-            # DR 及其设备变体（移动DR/床旁机/多功能X线机），并兜底空值/未知设备类型
-            df_dr = df_xray[~dev.isin(['RF', 'MG'])]  # 排除RF和MG（它们是独立模态）
-            if not df_dr.empty:
-                self.df_standard['DR'] = {}
-                for ver in df_dr['version'].unique():
-                    self.df_standard['DR'][ver] = df_dr[df_dr['version'] == ver].copy()
-                logger.info(f"[RuleDataLoader] 加载 DR 标准: {len(df_dr)} 条")
+        # 注意：新表中 DR 是独立模态，不再需要从 X线 拆分
+        # device_type_name 在新表中为空，此逻辑已废弃
 
     @property
     def is_ready(self) -> bool:

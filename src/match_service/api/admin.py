@@ -3,7 +3,8 @@ Phase E: 管理 API
 
 提供词表管理、规则编辑、历史追溯等管理功能的后端接口。
 """
-from typing import List, Optional
+import logging
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +12,61 @@ from pydantic import BaseModel
 
 from ..db import get_session_factory
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+# ---------------------------------------------------------------------------
+# 词库表元数据（B-01/B-03/B-04/B-05/B-09/B-22 修复的核心依据）
+#
+# 本库软删除约定（反直觉，务必注意）：
+#   enable 列：0 = 启用，1 = 停用（引擎加载 WHERE enable = 0）
+#   is_deleted 列：0 = 正常，1 = 已删除
+# ---------------------------------------------------------------------------
+LEXICON_TABLE_META: Dict[str, Dict[str, Any]] = {
+    "medical_dict": {
+        "table": "nlp_medical_dict",
+        "search_cols": ["word"],
+        "soft_delete_col": "enable",
+        "active_where": "enable = 0",
+        # 可写列白名单：杜绝列名注入（B-01），禁止客户端写 id
+        "writable_cols": ["word", "type", "enable"],
+    },
+    "phrase_map": {
+        "table": "nlp_phrase_map",
+        "search_cols": ["src_word", "dst_word"],
+        "soft_delete_col": "enable",
+        "active_where": "enable = 0",
+        "writable_cols": ["modality", "src_word", "dst_word", "step", "version", "enable"],
+    },
+    "ambiguity": {
+        "table": "nlp_ambiguity",
+        "search_cols": ["src_body", "src_process", "dst_body", "dst_process"],
+        "soft_delete_col": "enable",
+        "active_where": "enable = 0",
+        "writable_cols": ["src_body", "src_process", "dst_body", "dst_process",
+                          "version", "modality", "enable"],
+    },
+    "keyword_match_rules": {
+        "table": "keyword_match_rules",
+        "search_cols": ["keywords", "dst_value", "remark"],
+        "soft_delete_col": "enable",
+        "active_where": "enable = 0",
+        "writable_cols": ["modality", "rule_type", "keywords", "dst_value",
+                          "priority", "enable", "remark"],
+    },
+    "checkitem_standard": {
+        "table": "standard_check_items",
+        "search_cols": ["item_name", "item_code"],
+        "soft_delete_col": "is_active",
+        "active_where": "is_active = true",
+        "writable_cols": ["item_code", "item_name", "modality", "modality_code",
+                          "body_part_l1", "body_part_l2", "body_part_l3",
+                          "scan_method", "post_processing", "version", "is_active"],
+    },
+}
+
+LEXICON_TABLES = {key: meta["table"] for key, meta in LEXICON_TABLE_META.items()}
 
 
 async def _get_session() -> AsyncSession:
@@ -139,8 +194,8 @@ async def delete_medical_dict(
     item_id: int,
     session: AsyncSession = Depends(_get_session),
 ):
-    """删除医学词典条目（软删除：设置 enable=0）"""
-    sql = text("UPDATE nlp_medical_dict SET enable = 0 WHERE id = :id")
+    """删除医学词典条目（软删除：设置 enable=1；本库约定 0=启用 1=停用）"""
+    sql = text("UPDATE nlp_medical_dict SET enable = 1 WHERE id = :id")
     await session.execute(sql, {"id": item_id})
     await session.commit()
     return {"message": "删除成功"}
@@ -154,37 +209,59 @@ async def get_rule_version_history(
     limit: int = Query(20, le=100),
     session: AsyncSession = Depends(_get_session),
 ):
-    """规则版本变更历史
+    """规则版本快照（B-03/B-24 修复）
 
-    TODO: 需要实现版本变更日志表（rule_version_log）记录每次修改
-    当前返回当前版本信息
+    - 各表行数按 LEXICON_TABLE_META 的 active_where 统计（不再拼 enable OR is_deleted）
+    - 单表失败先 rollback 再降级为全表计数，避免 InFailedSQLTransactionError 连锁 500
+    - 附带版本化表的 version 分布，作为真实版本快照
     """
+    from ..core.engine_holder import get_engine_holder
     from ..core.rule_version import compute_rule_version
 
     current_version = await compute_rule_version(session)
 
-    # 统计各表行数
-    stats = {}
-    for table in ["nlp_medical_dict", "nlp_phrase_map", "nlp_ambiguity",
-                  "keyword_match_rules", "nlp_checkitem_standard"]:
-        count_sql = text(f"SELECT COUNT(*) FROM {table} WHERE enable = 0 OR is_deleted = 0")
+    stats: Dict[str, int] = {}
+    for key, meta in LEXICON_TABLE_META.items():
+        table = meta["table"]
         try:
-            count = (await session.execute(count_sql)).scalar()
-            stats[table] = count
-        except Exception:
-            # 某些表可能用 enable，某些用 is_deleted，简化处理
-            count_sql = text(f"SELECT COUNT(*) FROM {table}")
-            count = (await session.execute(count_sql)).scalar()
-            stats[table] = count
+            count = (await session.execute(
+                text(f"SELECT COUNT(*) FROM {table} WHERE {meta['active_where']}")
+            )).scalar()
+        except Exception as exc:
+            logger.warning("[rule-version/history] %s 按生效条件统计失败: %s", table, exc)
+            await session.rollback()
+            count = (await session.execute(text(f"SELECT COUNT(*) FROM {table}"))).scalar()
+        stats[table] = count
 
+    # 版本化表的 version 分布（真实快照数据）
+    version_dist: Dict[str, List[Dict[str, Any]]] = {}
+    for key in ("phrase_map", "ambiguity", "checkitem_standard"):
+        meta = LEXICON_TABLE_META[key]
+        try:
+            rows = (await session.execute(text(
+                f"SELECT version, COUNT(*) AS count FROM {meta['table']} "
+                f"WHERE {meta['active_where']} GROUP BY version ORDER BY version DESC"
+            ))).mappings().all()
+            version_dist[meta["table"]] = [
+                {"version": r["version"], "count": r["count"]} for r in rows
+            ]
+        except Exception as exc:
+            logger.warning("[rule-version/history] %s 版本分布查询失败: %s", meta["table"], exc)
+            await session.rollback()
+            version_dist[meta["table"]] = []
+
+    holder = get_engine_holder()
     return {
         "current_version": current_version,
+        "engine_version": holder.rule_version,
+        "engine_ready": holder.is_ready,
         "tables": stats,
+        "version_distribution": version_dist,
         "history": [
             {
                 "version": current_version,
                 "timestamp": "current",
-                "changes": "当前版本（历史功能待实现）",
+                "changes": "当前版本快照（变更日志表 rule_version_log 尚未建立）",
             }
         ],
     }
@@ -204,72 +281,71 @@ async def get_stats(session: AsyncSession = Depends(_get_session)):
         "nlp_phrase_map": "短语映射",
         "nlp_ambiguity": "消歧规则",
         "keyword_match_rules": "关键词规则",
-        "nlp_checkitem_standard": "标准库",
+        "standard_check_items": "标准库",
     }
 
+    # 各表计数按元数据配置的生效条件统计（B-09/B-10：不再盲试 enable/is_deleted）
     for table, name in tables.items():
-        # 总数
-        total_sql = text(f"SELECT COUNT(*) FROM {table}")
-        total = (await session.execute(total_sql)).scalar()
-
-        # 启用数
         try:
-            enabled_sql = text(
-                f"SELECT COUNT(*) FROM {table} WHERE enable = 0"
-            )
-            enabled = (await session.execute(enabled_sql)).scalar()
-        except Exception:
-            try:
-                enabled_sql = text(
-                    f"SELECT COUNT(*) FROM {table} WHERE is_deleted = 0"
-                )
-                enabled = (await session.execute(enabled_sql)).scalar()
-            except Exception:
-                enabled = total  # 无软删列的表
+            meta = next((m for m in LEXICON_TABLE_META.values() if m["table"] == table), None)
+            total = (await session.execute(text(f"SELECT COUNT(*) FROM {table}"))).scalar()
+            if meta:
+                enabled = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM {table} WHERE {meta['active_where']}")
+                )).scalar()
+            else:
+                enabled = total
 
-        stats[table] = {
-            "name": name,
-            "total": total,
-            "enabled": enabled,
-            "disabled": total - enabled,
-        }
+            stats[table] = {
+                "name": name,
+                "total": total,
+                "enabled": enabled,
+                "disabled": total - enabled if enabled is not None and total is not None else 0,
+            }
+        except Exception as exc:
+            logger.warning("[get_stats] 表 %s 统计失败: %s", table, exc)
+            await session.rollback()
+            stats[table] = {
+                "name": name,
+                "total": 0,
+                "enabled": 0,
+                "disabled": 0,
+            }
 
-    # 从 EngineHolder 内存引擎直接获取实时分布数据（极速且免 DB 事务风险）
-    dict_type_dist = {}
-    modality_dist = {}
+    # 分布数据全部来自真实 DB 查询（B-09/B-10：删除硬编码假保底）
+    dict_type_dist: Dict[str, int] = {}
+    modality_dist: Dict[str, int] = {}
+    unmatched_dist: Dict[str, int] = {}
+
     try:
-        from ..core.engine_holder import get_engine_holder
-        engine_obj = get_engine_holder().match_engine
-        if engine_obj:
-            # 统计词典类型分布
-            if hasattr(engine_obj, 'medical_dict') and isinstance(engine_obj.medical_dict, dict):
-                for item in engine_obj.medical_dict.values():
-                    t = getattr(item, 'type', None) or (item.get('type') if isinstance(item, dict) else None) or 'other'
-                    dict_type_dist[t] = dict_type_dist.get(t, 0) + 1
+        rows = (await session.execute(text(
+            "SELECT type, COUNT(*) AS c FROM nlp_medical_dict "
+            "WHERE enable = 0 GROUP BY type"
+        ))).all()
+        dict_type_dist = {r[0] or "other": r[1] for r in rows}
+    except Exception as exc:
+        logger.warning("[get_stats] 词典类型分布查询失败: %s", exc)
+        await session.rollback()
 
-            # 统计模态标准分布
-            if hasattr(engine_obj, 'check_item_standards') and isinstance(engine_obj.check_item_standards, (dict, list)):
-                standards = engine_obj.check_item_standards.values() if isinstance(engine_obj.check_item_standards, dict) else engine_obj.check_item_standards
-                for st in standards:
-                    m = getattr(st, 'modality', None) or (st.get('modality') if isinstance(st, dict) else None)
-                    if m:
-                        modality_dist[m] = modality_dist.get(m, 0) + 1
-    except Exception as e:
-        logger.error(f"[get_stats] EngineHolder 内存汇总失败: {e}")
+    try:
+        rows = (await session.execute(text(
+            "SELECT modality, COUNT(*) AS c FROM standard_check_items "
+            "WHERE is_active = true GROUP BY modality"
+        ))).all()
+        modality_dist = {r[0]: r[1] for r in rows if r[0]}
+    except Exception as exc:
+        logger.warning("[get_stats] 模态分布查询失败: %s", exc)
+        await session.rollback()
 
-
-    # 若内存统计为空，提供保底分布
-    if not modality_dist:
-        modality_dist = { "CT": 548, "MR": 480, "US": 443, "DR": 234, "RF": 54, "MG": 51, "SPECT": 48, "DSA": 28, "PET/MR": 12, "PET/CT": 12, "OCT": 6 }
-    if not dict_type_dist:
-        dict_type_dist = { "body": 1150, "scan": 480, "post": 320, "position": 285, "device": 140, "scope": 52 }
-
-    unmatched_dist = {
-        "lexicon_gap": 28,
-        "standard_lib_gap": 15,
-        "needs_manual": 8,
-        "engine_error": 2,
-    }
+    try:
+        rows = (await session.execute(text(
+            "SELECT reason_code, COUNT(*) AS c FROM unmatched_registry "
+            "WHERE status = 'open' GROUP BY reason_code"
+        ))).all()
+        unmatched_dist = {r[0]: r[1] for r in rows if r[0]}
+    except Exception as exc:
+        logger.warning("[get_stats] 未匹配分布查询失败: %s", exc)
+        await session.rollback()
 
     # 返回扁平结构与深度分析数据（兼容前端 Dashboard）
     return {
@@ -279,7 +355,7 @@ async def get_stats(session: AsyncSession = Depends(_get_session)):
         "total_medical_dict": stats.get("nlp_medical_dict", {}).get("total", 0),
         "total_phrase_map": stats.get("nlp_phrase_map", {}).get("total", 0),
         "total_ambiguity": stats.get("nlp_ambiguity", {}).get("total", 0),
-        "total_standard_items": stats.get("nlp_checkitem_standard", {}).get("total", 0),
+        "total_standard_items": stats.get("standard_check_items", {}).get("total", 0),
         # 深度数据分析汇总
         "dict_type_distribution": dict_type_dist,
         "unmatched_distribution": unmatched_dist,
@@ -298,7 +374,7 @@ LEXICON_TABLES = {
     "phrase_map": "nlp_phrase_map",
     "ambiguity": "nlp_ambiguity",
     "keyword_match_rules": "keyword_match_rules",
-    "checkitem_standard": "nlp_checkitem_standard",
+    "checkitem_standard": "standard_check_items",
 }
 
 
@@ -316,7 +392,7 @@ async def get_lexicon_versions(session: AsyncSession = Depends(_get_session)):
     versioned_tables = {
         "phrase_map": "nlp_phrase_map",
         "ambiguity": "nlp_ambiguity",
-        "checkitem_standard": "nlp_checkitem_standard",
+        "checkitem_standard": "standard_check_items",
     }
 
     for key, table in versioned_tables.items():
@@ -333,9 +409,11 @@ async def get_lexicon_versions(session: AsyncSession = Depends(_get_session)):
             for row in rows
         ]
 
-    # 默认版本和回退链（简化实现）
-    default_version = "V3.8.2"
-    fallback_chain = ["V3.8.2", "V3.8.1", "V3.8.0"]
+    # 默认版本与回退链：引用引擎真实常量（与 orchestrator 默认参数一致）
+    from ..engine.match_engine_v2.constants import VERSION_FALLBACK
+
+    default_version = "V3.8.2"  # MatchOrchestrator.match 的默认 version
+    fallback_chain = VERSION_FALLBACK.get(default_version, [default_version])
 
     return {
         "versions": versions,
@@ -428,7 +506,7 @@ async def get_phrase_map_grouped(
 
 @router.post("/lexicon/reload")
 async def reload_lexicon(session: AsyncSession = Depends(_get_session)):
-    """热重载匹配引擎规则"""
+    """热重载匹配引擎规则（B-06：联动清空匹配缓存，避免旧结果残留）"""
     from ..core.rule_version import compute_rule_version
     from ..core.engine_holder import get_engine_holder
 
@@ -439,9 +517,18 @@ async def reload_lexicon(session: AsyncSession = Depends(_get_session)):
     holder = get_engine_holder()
     await holder.reload()
 
+    # 清空 Redis 匹配缓存（规则变更后历史缓存可能失效）
+    cache_cleared = False
+    try:
+        from ..cache.service import get_cache_service
+        cache_cleared = await get_cache_service().invalidate_all()
+    except Exception as exc:
+        logger.warning("[lexicon/reload] 缓存清空失败（不影响重载）: %s", exc)
+
     return {
         "message": "已热重载",
         "rule_version": new_version,
+        "cache_cleared": cache_cleared,
     }
 
 
@@ -470,7 +557,10 @@ async def get_lexicon_rows(
     params = {}
 
     if search:
-        conditions.append("(CAST(id AS TEXT) LIKE :search OR word LIKE :search OR src_word LIKE :search OR dst_word LIKE :search OR keywords LIKE :search OR checkitem_name LIKE :search)")
+        # B-04：搜索列按表元数据配置，不再跨表硬编码不存在的列（原实现导致全部搜索 500）
+        meta = LEXICON_TABLE_META[table]
+        search_or = " OR ".join(f"{col} ILIKE :search" for col in meta["search_cols"])
+        conditions.append(f"({search_or})")
         params["search"] = f"%{search}%"
 
     if version:
@@ -519,13 +609,21 @@ async def create_lexicon_row(
     data: dict,
     session: AsyncSession = Depends(_get_session),
 ):
-    """通用词库新增"""
+    """通用词库新增（B-01：列名白名单校验，杜绝列名注入）"""
     if table not in LEXICON_TABLES:
         raise HTTPException(404, f"未知表: {table}")
 
-    db_table = LEXICON_TABLES[table]
+    meta = LEXICON_TABLE_META[table]
+    db_table = meta["table"]
+    allowed = set(meta["writable_cols"])
 
-    # 构建 INSERT 语句
+    if not data:
+        raise HTTPException(400, "请求体不能为空")
+    invalid = [k for k in data.keys() if k not in allowed]
+    if invalid:
+        raise HTTPException(400, f"不允许写入的列: {invalid}（允许: {sorted(allowed)}）")
+
+    # 构建 INSERT 语句（列名已通过白名单校验）
     columns = list(data.keys())
     placeholders = [f":{col}" for col in columns]
     sql = f"INSERT INTO {db_table} ({', '.join(columns)}) VALUES ({', '.join(placeholders)}) RETURNING id"
@@ -544,13 +642,21 @@ async def update_lexicon_row(
     data: dict,
     session: AsyncSession = Depends(_get_session),
 ):
-    """通用词库更新"""
+    """通用词库更新（B-01：列名白名单校验，禁止改写 id）"""
     if table not in LEXICON_TABLES:
         raise HTTPException(404, f"未知表: {table}")
 
-    db_table = LEXICON_TABLES[table]
+    meta = LEXICON_TABLE_META[table]
+    db_table = meta["table"]
+    allowed = set(meta["writable_cols"])
 
-    # 构建 UPDATE 语句
+    if not data:
+        raise HTTPException(400, "请求体不能为空")
+    invalid = [k for k in data.keys() if k not in allowed]
+    if invalid:
+        raise HTTPException(400, f"不允许更新的列: {invalid}（允许: {sorted(allowed)}）")
+
+    # 构建 UPDATE 语句（列名已通过白名单校验）
     set_clauses = [f"{col} = :{col}" for col in data.keys()]
     sql = f"UPDATE {db_table} SET {', '.join(set_clauses)} WHERE id = :id"
 
@@ -558,7 +664,7 @@ async def update_lexicon_row(
     await session.execute(text(sql), data)
     await session.commit()
 
-    return {"id": row_id, **data}
+    return {"id": row_id, **{k: v for k, v in data.items() if k != "id"}}
 
 
 @router.delete("/lexicon/{table}/{row_id}")
@@ -567,25 +673,21 @@ async def delete_lexicon_row(
     row_id: int,
     session: AsyncSession = Depends(_get_session),
 ):
-    """通用词库软删除（设置 enable=1）"""
+    """通用词库软删除（B-05/B-22：按表元数据直接定位软删列，去掉试错兜底）"""
     if table not in LEXICON_TABLES:
         raise HTTPException(404, f"未知表: {table}")
 
-    db_table = LEXICON_TABLES[table]
+    meta = LEXICON_TABLE_META[table]
+    db_table = meta["table"]
+    soft_col = meta["soft_delete_col"]
 
-    # 尝试软删除
-    try:
-        sql = text(f"UPDATE {db_table} SET enable = 1 WHERE id = :id")
-        await session.execute(sql, {"id": row_id})
-        await session.commit()
-    except Exception:
-        # 如果没有 enable 列，尝试 is_deleted
-        try:
-            sql = text(f"UPDATE {db_table} SET is_deleted = 1 WHERE id = :id")
-            await session.execute(sql, {"id": row_id})
-            await session.commit()
-        except Exception:
-            raise HTTPException(500, "软删除失败")
+    result = await session.execute(
+        text(f"UPDATE {db_table} SET {soft_col} = 1 WHERE id = :id"),
+        {"id": row_id},
+    )
+    await session.commit()
+    if result.rowcount == 0:
+        raise HTTPException(404, f"记录不存在: {table}/{row_id}")
 
     return {"message": "已软删除"}
 
@@ -608,33 +710,33 @@ async def get_standard_items(
     """标准项目查询（分页+多维筛选+版本筛选）"""
     offset = (page - 1) * page_size
 
-    # 构建查询条件（映射前端字段名到数据库字段名）
-    where_clauses = ["is_deleted = 0"]  # 只查询未删除的数据
+    # 构建查询条件（B-08修复：使用新表 standard_check_items）
+    where_clauses = ["is_active = true"]  # 只查询有效数据
     params = {}
 
     if modality:
-        where_clauses.append("modality_name = :modality")
+        where_clauses.append("modality = :modality")
         params["modality"] = modality
     if body_part_l1:
-        where_clauses.append("scope_name = :body_part_l1")
+        where_clauses.append("body_part_l1 = :body_part_l1")
         params["body_part_l1"] = body_part_l1
     if body_part_l2:
-        where_clauses.append("three_level_name = :body_part_l2")
+        where_clauses.append("body_part_l2 = :body_part_l2")
         params["body_part_l2"] = body_part_l2
     if body_part_l3:
-        # 数据库没有三级部位字段，忽略
-        pass
+        where_clauses.append("body_part_l3 = :body_part_l3")
+        params["body_part_l3"] = body_part_l3
     if version:
         where_clauses.append("version = :version")
         params["version"] = version
     if search:
-        where_clauses.append("(checkitem_name ILIKE :search OR checkitem_code ILIKE :search)")
+        where_clauses.append("(item_name ILIKE :search OR item_code ILIKE :search)")
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(where_clauses)
 
     # 查询总数
-    count_sql = f"SELECT COUNT(*) FROM nlp_checkitem_standard WHERE {where_sql}"
+    count_sql = f"SELECT COUNT(*) FROM standard_check_items WHERE {where_sql}"
     count_result = await session.execute(text(count_sql), params)
     total = count_result.scalar()
 
@@ -642,28 +744,28 @@ async def get_standard_items(
     params["offset"] = offset
     params["limit"] = page_size
     data_sql = f"""
-        SELECT id, checkitem_code, checkitem_name, modality_name, scope_name, three_level_name,
-               scan_name, post_processing_name, version
-        FROM nlp_checkitem_standard
+        SELECT id, item_code, item_name, modality, body_part_l1, body_part_l2,
+               body_part_l3, scan_method, post_processing, version
+        FROM standard_check_items
         WHERE {where_sql}
         ORDER BY id
         LIMIT :limit OFFSET :offset
     """
     result = await session.execute(text(data_sql), params)
-    # 映射到前端期望的字段名
+    # 新表字段已对齐，直接返回
     items = []
     for row in result:
         row_dict = dict(row._mapping)
         items.append({
             "id": row_dict.get("id"),
-            "item_code": row_dict.get("checkitem_code"),
-            "item_name": row_dict.get("checkitem_name"),
-            "modality": row_dict.get("modality_name"),
-            "body_part_l1": row_dict.get("scope_name"),
-            "body_part_l2": row_dict.get("three_level_name"),
-            "body_part_l3": "",
-            "scan_method": row_dict.get("scan_name"),
-            "post_processing": row_dict.get("post_processing_name"),
+            "item_code": row_dict.get("item_code"),
+            "item_name": row_dict.get("item_name"),
+            "modality": row_dict.get("modality"),
+            "body_part_l1": row_dict.get("body_part_l1"),
+            "body_part_l2": row_dict.get("body_part_l2"),
+            "body_part_l3": row_dict.get("body_part_l3"),
+            "scan_method": row_dict.get("scan_method"),
+            "post_processing": row_dict.get("post_processing"),
             "version": row_dict.get("version"),
         })
 
@@ -685,7 +787,7 @@ async def get_standard_item_stats(
 
     # 如果指定了version参数，直接按版本筛选
     if version:
-        where_clauses = ["is_deleted = 0"]
+        where_clauses = ["is_active = true"]
         params = {"version": version}
         where_clauses.append("version = :version")
         where_sql = " AND ".join(where_clauses)
@@ -694,18 +796,18 @@ async def get_standard_item_stats(
         stats_sql = f"""
             SELECT
                 COUNT(*) as total,
-                COUNT(DISTINCT modality_name) as modality_count,
-                COUNT(DISTINCT scope_name) as body_part_count
-            FROM nlp_checkitem_standard WHERE {where_sql}
+                COUNT(DISTINCT modality) as modality_count,
+                COUNT(DISTINCT body_part_l1) as body_part_count
+            FROM standard_check_items WHERE {where_sql}
         """
         result = await session.execute(text(stats_sql), params)
         stats = dict(result.mappings().first())
 
         # 各模态分布
         modality_sql = f"""
-            SELECT modality_name as modality, COUNT(*) as count
-            FROM nlp_checkitem_standard WHERE {where_sql}
-            GROUP BY modality_name ORDER BY count DESC
+            SELECT modality, COUNT(*) as count
+            FROM standard_check_items WHERE {where_sql}
+            GROUP BY modality ORDER BY count DESC
         """
         result = await session.execute(text(modality_sql), params)
         modality_distribution = [dict(row._mapping) for row in result]
@@ -716,19 +818,19 @@ async def get_standard_item_stats(
         stats_sql = """
             SELECT
                 COUNT(*) as total,
-                COUNT(DISTINCT modality_name) as modality_count,
-                COUNT(DISTINCT scope_name) as body_part_count
-            FROM nlp_checkitem_standard
-            WHERE is_deleted = 0
+                COUNT(DISTINCT modality) as modality_count,
+                COUNT(DISTINCT body_part_l1) as body_part_count
+            FROM standard_check_items
+            WHERE is_active = true
         """
         result = await session.execute(text(stats_sql))
         stats = dict(result.mappings().first())
 
         modality_sql = """
-            SELECT modality_name as modality, COUNT(*) as count
-            FROM nlp_checkitem_standard
-            WHERE is_deleted = 0
-            GROUP BY modality_name ORDER BY count DESC
+            SELECT modality, COUNT(*) as count
+            FROM standard_check_items
+            WHERE is_active = true
+            GROUP BY modality ORDER BY count DESC
         """
         result = await session.execute(text(modality_sql))
         modality_distribution = [dict(row._mapping) for row in result]
@@ -736,23 +838,22 @@ async def get_standard_item_stats(
 
     else:
         # 默认：统计所有激活数据（不进行版本去重）
-        # 注：由于导入数据的checkitem_code有重复问题，暂不进行版本去重
         stats_sql = """
             SELECT
                 COUNT(*) as total,
-                COUNT(DISTINCT modality_name) as modality_count,
-                COUNT(DISTINCT scope_name) as body_part_count
-            FROM nlp_checkitem_standard
-            WHERE is_deleted = 0
+                COUNT(DISTINCT modality) as modality_count,
+                COUNT(DISTINCT body_part_l1) as body_part_count
+            FROM standard_check_items
+            WHERE is_active = true
         """
         result = await session.execute(text(stats_sql))
         stats = dict(result.mappings().first())
 
         modality_sql = """
-            SELECT modality_name as modality, COUNT(*) as count
-            FROM nlp_checkitem_standard
-            WHERE is_deleted = 0
-            GROUP BY modality_name
+            SELECT modality, COUNT(*) as count
+            FROM standard_check_items
+            WHERE is_active = true
+            GROUP BY modality
             ORDER BY count DESC
         """
         result = await session.execute(text(modality_sql))
@@ -761,17 +862,17 @@ async def get_standard_item_stats(
 
     # 一级部位分布 Top 10
     body_sql = """
-        SELECT scope_name as body_part_l1, COUNT(*) as count
-        FROM nlp_checkitem_standard
-        WHERE is_deleted = 0 AND scope_name IS NOT NULL
-        GROUP BY scope_name
+        SELECT body_part_l1, COUNT(*) as count
+        FROM standard_check_items
+        WHERE is_active = true AND body_part_l1 IS NOT NULL
+        GROUP BY body_part_l1
         ORDER BY count DESC LIMIT 10
     """
     body_res = await session.execute(text(body_sql))
     by_body_part = {row[0]: row[1] for row in body_res}
 
     # 可用版本号列表
-    versions_sql = "SELECT DISTINCT version FROM nlp_checkitem_standard WHERE version IS NOT NULL AND is_deleted = 0 ORDER BY version DESC"
+    versions_sql = "SELECT DISTINCT version FROM standard_check_items WHERE version IS NOT NULL AND is_active = true ORDER BY version DESC"
     ver_res = await session.execute(text(versions_sql))
     available_versions = [row[0] for row in ver_res]
 
@@ -896,7 +997,10 @@ async def get_unmatched_list(
         where_clauses.append("u.status = 'open'")  # 默认只显示待处理
 
     if search:
-        where_clauses.append("p.name_zh ILIKE :search")
+        # 搜索覆盖：标准名 / 归因详情 / procedure_id（无字典映射的记录也能搜到）
+        where_clauses.append(
+            "(p.name_zh ILIKE :search OR u.detail ILIKE :search OR u.procedure_id::text ILIKE :search)"
+        )
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
@@ -934,7 +1038,7 @@ async def get_unmatched_list(
 @router.put("/unmatched/{unmatched_id}/status")
 async def update_unmatched_status(
     unmatched_id: int,
-    status: str = Query(..., regex="^(open|resolved|wontfix)$"),
+    status: str = Query(..., pattern="^(open|resolved|wontfix)$"),
     session: AsyncSession = Depends(_get_session),
 ):
     """更新未匹配项目状态"""
