@@ -70,6 +70,30 @@ def _fuzzy_match(expected: str, actual: str) -> bool:
     return False
 
 
+def _cell_str(row, *keys) -> str:
+    """
+    按候选列名顺序读取单元格，返回第一个非空字符串。
+
+    兼容不同来源的 CSV 表头：
+    - 检查项: check_item / name / text / procedure_name
+    - 期望编码: expected_standard_code / expected_code / standard_code
+    - 期望名称: expected_standard_name / expected_name / standard_name
+    """
+    for k in keys:
+        v = row.get(k, None)
+        if v is None:
+            continue
+        try:
+            if pd.isna(v):
+                continue
+        except (TypeError, ValueError):
+            pass
+        s = str(v).strip()
+        if s and s.lower() != 'nan':
+            return s
+    return ''
+
+
 class EvaluationRunner:
     """评测执行器"""
 
@@ -126,6 +150,14 @@ class EvaluationRunner:
                 logger.info(f"读取测试文件: {test_file}")
                 df = pd.read_csv(test_file)
 
+                # B-12修复：验证CSV包含可识别的检查项列，防止整任务产出无效数据
+                item_cols = [c for c in ['check_item', 'name', 'text', 'procedure_name'] if c in df.columns]
+                if not item_cols:
+                    raise ValueError(
+                        f"CSV缺少检查项列，支持的列名: check_item/name/text/procedure_name，"
+                        f"实际列: {list(df.columns)}"
+                    )
+
                 # 模态过滤
                 if modality_filter:
                     df = df[df['modality'] == modality_filter]
@@ -160,13 +192,13 @@ class EvaluationRunner:
                 for idx, row in df_sample.iterrows():
                     results['total'] += 1
 
-                    # 提取数据
-                    check_item = row.get('check_item', '')
-                    modality = row.get('modality', '')
-                    expected_code = str(row.get('expected_standard_code', '')).strip()
+                    # 提取数据（兼容多套表头别名）
+                    check_item = _cell_str(row, 'check_item', 'name', 'text', 'procedure_name')
+                    modality = _cell_str(row, 'modality')
+                    expected_code = _cell_str(row, 'expected_standard_code', 'expected_code', 'standard_code')
                     if expected_code.endswith('.0'):
                         expected_code = expected_code[:-2]
-                    expected_name = row.get('expected_standard_name', '')
+                    expected_name = _cell_str(row, 'expected_standard_name', 'expected_name', 'standard_name')
 
                     if not check_item:
                         results['no_match'] += 1
@@ -219,20 +251,29 @@ class EvaluationRunner:
                                 for candidate in match_result['data']:
                                     for std_item in candidate.get('standard', []):
                                         std_name = std_item.get('name', '')
+                                        std_code = str(std_item.get('code', '')).strip()
 
-                                        # 完全匹配
-                                        if std_name == expected_name:
+                                        # 编码精确匹配（最可靠，优先于名称比较）
+                                        if expected_code and std_code and std_code == expected_code:
                                             is_correct = True
                                             match_method = 'exact'
-                                            actual_code_used = str(std_item.get('code', '')).strip()
+                                            actual_code_used = std_code
                                             actual_name_used = std_name
                                             break
 
-                                        # 模糊匹配
-                                        if not is_correct and _fuzzy_match(expected_name, std_name):
+                                        # 名称完全匹配
+                                        if expected_name and std_name == expected_name:
+                                            is_correct = True
+                                            match_method = 'exact'
+                                            actual_code_used = std_code
+                                            actual_name_used = std_name
+                                            break
+
+                                        # 名称模糊匹配
+                                        if not is_correct and expected_name and _fuzzy_match(expected_name, std_name):
                                             is_correct = True
                                             match_method = 'fuzzy'
-                                            actual_code_used = str(std_item.get('code', '')).strip()
+                                            actual_code_used = std_code
                                             actual_name_used = std_name
 
                                     if is_correct and match_method == 'exact':

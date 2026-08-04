@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, desc, func, text
+from sqlalchemy import select, update, desc, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session_factory
@@ -209,7 +209,11 @@ async def start_evaluation(task_id: int, background_tasks: BackgroundTasks):
     """
     session_factory = get_session_factory()
     async with session_factory() as session:
-        task = await session.get(EvalTask, task_id)
+        # B-14修复：SELECT FOR UPDATE 原子性检查并锁定任务，防止并发双启动
+        result = await session.execute(
+            select(EvalTask).where(EvalTask.id == task_id).with_for_update()
+        )
+        task = result.scalar_one_or_none()
         if not task:
             raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
@@ -224,15 +228,24 @@ async def start_evaluation(task_id: int, background_tasks: BackgroundTasks):
         if not test_file.exists():
             raise HTTPException(status_code=400, detail=f"测试文件不存在: {task.test_file_path}")
 
+        # 原子性将状态置为 running，释放锁后其他并发请求将看到非 pending 状态
+        task.status = 'running'
+        task.started_at = datetime.utcnow()
+        await session.commit()
+
+        task_file_path = str(task.test_file_path)
+        task_sample_size = task.sample_size
+        task_modality = task.modality
+
     # 启动后台任务
     runner = get_runner()
     background_tasks.add_task(
         _run_evaluation_background,
         runner,
         task_id,
-        task.test_file_path,
-        task.sample_size,
-        task.modality,
+        task_file_path,
+        task_sample_size,
+        task_modality,
     )
 
     logger.info(f"启动评测任务: {task_id}")
