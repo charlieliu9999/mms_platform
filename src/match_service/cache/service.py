@@ -31,6 +31,9 @@ class CacheService:
             return None
 
         if row.expires_at and row.expires_at < datetime.utcnow():
+            # B-17修复：物理删除过期行，防止表无限膨胀
+            await self.session.delete(row)
+            await self.session.commit()
             return None
 
         row.hit_count += 1

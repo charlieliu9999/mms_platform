@@ -119,6 +119,11 @@ async def create_task(request: CreateTaskRequest):
     if not test_file.suffix == ".csv":
         raise HTTPException(status_code=400, detail="仅支持 CSV 格式测试文件")
 
+    # B-23修复：防止路径遍历，文件必须在项目目录内
+    project_root = Path(__file__).resolve().parents[3]
+    if not test_file.resolve().is_relative_to(project_root):
+        raise HTTPException(status_code=400, detail="测试文件路径不在允许的目录范围内")
+
     # 创建任务
     session_factory = get_session_factory()
     async with session_factory() as session:
