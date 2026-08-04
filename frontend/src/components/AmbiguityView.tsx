@@ -37,7 +37,7 @@ export function AmbiguityView({ activeVersion }: Props) {
     modality: string; version: string; enable: number;
   }>({
     src_body: '', src_process: '', dst_body: '', dst_process: '',
-    modality: 'CT', version: '', enable: 0,
+    modality: 'CT', version: '', enable: 1,  // F-06: 默认停用
   });
 
   const load = useCallback(async () => {
@@ -59,7 +59,7 @@ export function AmbiguityView({ activeVersion }: Props) {
     setEdit({ mode: 'new' });
     setForm({
       src_body: '', src_process: '', dst_body: '', dst_process: '',
-      modality, version: activeVersion || 'V3.8.2', enable: 0,
+      modality, version: activeVersion || 'V3.8.2', enable: 1,  // F-06: 默认停用
     });
   };
   const openEdit = (row: Row) => {

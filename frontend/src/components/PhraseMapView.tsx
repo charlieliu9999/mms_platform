@@ -101,7 +101,7 @@ export function PhraseMapView({ activeVersion }: Props) {
         step: form.step,
         modality: form.modality || 'ALL',
         version: form.version || undefined,
-        enable: 0,
+        enable: 1,  // F-06: 默认停用
       };
       if (edit?.mode === 'new') {
         await adminAPI.createLexiconRow('phrase_map', payload);

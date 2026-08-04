@@ -38,7 +38,7 @@ export function KeywordRuleView() {
   const [form, setForm] = useState<{
     modality: string; rule_type: string; keywords: string;
     dst_value: string; priority: number; enable: number; remark: string;
-  }>({ modality: 'US', rule_type: 'body', keywords: '', dst_value: '', priority: 100, enable: 0, remark: '' });
+  }>({ modality: 'US', rule_type: 'body', keywords: '', dst_value: '', priority: 100, enable: 1, remark: '' });  // F-06: 默认停用
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,7 +56,7 @@ export function KeywordRuleView() {
 
   const openNew = () => {
     setEdit({ mode: 'new' });
-    setForm({ modality, rule_type: ruleType, keywords: '', dst_value: '', priority: 100, enable: 0, remark: '' });
+    setForm({ modality, rule_type: ruleType, keywords: '', dst_value: '', priority: 100, enable: 1, remark: '' });  // F-06: 默认停用
   };
   const openEdit = (row: Row) => {
     setEdit({ mode: 'edit', row });

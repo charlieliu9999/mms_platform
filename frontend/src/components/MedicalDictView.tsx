@@ -28,6 +28,7 @@ export function MedicalDictView() {
 
   // 编辑抽屉状态
   const [edit, setEdit] = useState<{ mode: 'new' | 'edit'; record?: MedicalDictItem } | null>(null);
+  // F-06 修复：本项目 enable 语义反直觉（0=启用 1=停用），新建词条默认应为停用(1)
   const [form, setForm] = useState({ word: '', type: 'body', modality: '通用', enable: 1 });
 
   const load = async () => {
@@ -58,7 +59,7 @@ export function MedicalDictView() {
   };
 
   const openNew = () => {
-    setForm({ word: '', type: activeType, modality: '通用', enable: 1 });
+    setForm({ word: '', type: activeType, modality: '通用', enable: 1 });  // F-06: 默认停用
     setEdit({ mode: 'new' });
   };
 
