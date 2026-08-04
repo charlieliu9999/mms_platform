@@ -32,8 +32,13 @@ async def match_one(req: MatchRequest, session: AsyncSession = Depends(_get_sess
     if not holder.is_ready:
         raise HTTPException(status_code=503, detail="引擎未就绪")
 
+    # B-02 修复：同时支持 text 和 name 字段（text 优先，兼容前端）
+    check_item_text = req.text or req.name
+    if not check_item_text:
+        raise HTTPException(status_code=422, detail="必须提供 text 或 name 字段")
+
     dispatcher = MatchDispatcher(session, holder)
-    result = await dispatcher.match(req.name, req.modality, req.version)
+    result = await dispatcher.match(check_item_text, req.modality, req.version)
     return {"result": result, "rule_version": holder.rule_version}
 
 
@@ -77,20 +82,36 @@ async def cache_stats(session: AsyncSession = Depends(_get_session)):
 
 @router.post("/feedback")
 async def submit_feedback(item: FeedbackItem, session: AsyncSession = Depends(_get_session)):
+    """提交匹配反馈（B-16/D-03：按 (text_hash, modality) 幂等 upsert，不再无限 INSERT）
+
+    依赖迁移 20260804_0200 建立的 uq_match_feedback_text_hash_modality 唯一索引。
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
     from ..cache.models import MatchCache, MatchFeedback
 
     text_hash = MatchCache.compute_hash(item.text, item.modality)
-    feedback = MatchFeedback(
-        text_hash=text_hash,
-        modality=item.modality.upper(),
-        original_text=item.text,
-        engine_result_json=None,
-        engine_tier=None,
-        feedback_type="manual_correction",
-        suggested_fix=item.comment,
-        status="pending",
+    values = {
+        "text_hash": text_hash,
+        "modality": item.modality.upper(),
+        "original_text": item.text,
+        "engine_result_json": None,
+        "engine_tier": None,
+        "feedback_type": "manual_correction",
+        "suggested_fix": item.comment,
+        "status": "pending",
+    }
+    stmt = pg_insert(MatchFeedback).values(**values)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["text_hash", "modality"],
+        set_={
+            "original_text": stmt.excluded.original_text,
+            "feedback_type": stmt.excluded.feedback_type,
+            "suggested_fix": stmt.excluded.suggested_fix,
+            "status": "pending",
+            "resolved_at": None,
+        },
     )
-    session.add(feedback)
+    await session.execute(stmt)
 
     if item.correct_result:
         cache = CacheService(session)
@@ -102,20 +123,34 @@ async def submit_feedback(item: FeedbackItem, session: AsyncSession = Depends(_g
 
 @router.post("/reload")
 async def reload_rules():
+    """热重载规则（B-06：联动清空 Redis 匹配缓存，避免旧规则结果残留）"""
     holder = get_engine_holder()
     try:
         version = await holder.reload()
     except Exception as e:
         logger.error(f"[match-service] reload 失败: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"reload 失败: {e}")
-    return {"status": "reloaded", "rule_version": version}
+
+    cache_cleared = False
+    try:
+        from ..cache.service import get_cache_service
+        cache_cleared = await get_cache_service().invalidate_all()
+    except Exception as e:
+        logger.warning(f"[match-service] reload 后缓存清空失败（不影响重载）: {e}")
+
+    return {"status": "reloaded", "rule_version": version, "cache_cleared": cache_cleared}
 
 
 @router.get("/health")
 async def health(session: AsyncSession = Depends(_get_session)):
+    """健康检查（B-07：cache_stats 降级为 best-effort，DB/Redis 抖动不再拖垮探针）"""
     holder = get_engine_holder()
-    cache = CacheService(session)
-    stats = await cache.get_stats()
+    stats = None
+    try:
+        cache = CacheService(session)
+        stats = await cache.get_stats()
+    except Exception as e:
+        logger.warning(f"[match-service] health 缓存统计获取失败: {e}")
     return {
         "status": "ok" if holder.is_ready else "initializing",
         "rule_version": holder.rule_version,
