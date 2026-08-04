@@ -52,12 +52,11 @@ RULE_TABLES: Dict[str, RuleTableSpec] = {
                  "priority", "enable", "remark"],
     ),
     "checkitem_standard": RuleTableSpec(
-        tablename="nlp_checkitem_standard",
-        soft_delete_col="is_deleted",
-        columns=["modality_name", "device_type_name", "three_level_name",
-                 "scan_name", "post_processing_name", "position_name",
-                 "scope_name", "checkitem_code", "checkitem_name",
-                 "version", "is_deleted"],
+        tablename="standard_check_items",  # B-08修复：统一到新表
+        soft_delete_col="is_active",       # B-08修复：使用正确的软删除列
+        columns=["item_code", "item_name", "modality", "modality_code",
+                 "body_part_l1", "body_part_l2", "body_part_l3",
+                 "scan_method", "post_processing", "version", "is_active"],
     ),
 }
 
@@ -74,10 +73,18 @@ async def compute_rule_version(db: AsyncSession) -> str:
             cols_expr = " || '|' || ".join(
                 f"COALESCE(CAST({c} AS TEXT), '')" for c in spec.columns
             )
+            # B-08修复：根据软删除列类型选择正确的查询条件
+            if spec.soft_delete_col == "is_active":
+                # standard_check_items 使用 boolean 类型（true=启用）
+                where_clause = f"{spec.soft_delete_col} = true"
+            else:
+                # 其他表使用 enable 列（0=启用，反直觉）
+                where_clause = f"{spec.soft_delete_col} = 0"
+
             sql = text(
                 f"SELECT COUNT(*), "
                 f"COALESCE(md5(string_agg({cols_expr}, ',' ORDER BY id)), '') "
-                f"FROM {spec.tablename} WHERE {spec.soft_delete_col} = 0"
+                f"FROM {spec.tablename} WHERE {where_clause}"
             )
             cnt, digest = (await db.execute(sql)).one()
             total_rows += int(cnt or 0)
