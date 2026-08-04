@@ -673,7 +673,12 @@ async def delete_lexicon_row(
     row_id: int,
     session: AsyncSession = Depends(_get_session),
 ):
-    """通用词库软删除（B-05/B-22：按表元数据直接定位软删列，去掉试错兜底）"""
+    """通用词库软删除（B-05/B-22：按表元数据直接定位软删列，去掉试错兜底）
+
+    B-05 修复：根据列类型设置正确的删除值
+    - enable 列（反直觉）：1 = 停用（删除）
+    - is_active 列（正常）：false = 停用（删除）
+    """
     if table not in LEXICON_TABLES:
         raise HTTPException(404, f"未知表: {table}")
 
@@ -681,8 +686,16 @@ async def delete_lexicon_row(
     db_table = meta["table"]
     soft_col = meta["soft_delete_col"]
 
+    # B-05 修复：根据软删除列类型设置正确的值
+    if soft_col == "is_active":
+        # standard_check_items 表使用 boolean 类型
+        delete_value = "false"
+    else:
+        # 其他表使用 enable 列（0=启用，1=停用）
+        delete_value = "1"
+
     result = await session.execute(
-        text(f"UPDATE {db_table} SET {soft_col} = 1 WHERE id = :id"),
+        text(f"UPDATE {db_table} SET {soft_col} = {delete_value} WHERE id = :id"),
         {"id": row_id},
     )
     await session.commit()
