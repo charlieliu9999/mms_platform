@@ -317,6 +317,12 @@ class MatchEngineOrchestrator:
         if trace is not None:
             trace['8.5-normalize_vascular'] = [str(n) for n in childrens]
 
+        # Step 8.6: 去除查询语义重复节点（括号缩写影子节点、平扫+增强冗余节点等），
+        # 避免 lookup 的 dup_set 拦截重复节点产生空块、误判 ambiguous
+        childrens = self._dedup_query_equivalent_nodes(childrens)
+        if trace is not None:
+            trace['8.6-dedup_query_equivalent'] = [str(n) for n in childrens]
+
         # Step 9: 补充默认处理方式
         childrens = self.lookup_service.find_default_process(
             childrens, process_type, modality, version)
@@ -389,6 +395,64 @@ class MatchEngineOrchestrator:
         match_info['reason'] = ''
         match_info['has_entity'] = has_entity
         return match_info
+
+    @staticmethod
+    def _node_query_signature(node) -> Tuple[frozenset, frozenset, frozenset]:
+        """提取节点的查询语义签名：(body集合, scan集合, post集合)。"""
+        def vals(pos):
+            return frozenset(node.std_names[j] for j in node.pos_dict.get(pos, []))
+        return vals('body'), vals('scan'), vals('post')
+
+    @classmethod
+    def _dedup_query_equivalent_nodes(cls, childrens: List) -> List:
+        """去除查询语义重复的节点。
+
+        典型来源：
+        1) 括号缩写影子节点 —— "(CE-MRA)" 中的 MRA 被单独映射为 scan 实体，
+           归一化后与主节点形成相同 (body, scan) 查询；
+        2) 平扫+增强冗余节点 —— 已存在 CTA/MRA 等具体技术节点时，
+           血管归一化把残留的"平扫+增强"节点转成相同查询。
+        这类重复节点在 lookup 阶段会被 dup_set 拦截为空块，
+        进而被误判为"有实体未匹配"导致 ambiguous 降级。
+
+        body 兼容规则：两节点 body 均为单值且互为子串（如 全腹部 / 全腹部动脉）
+        视为同一部位，保留 body 更具体（更长）的节点。
+        """
+        result = []
+        for node in childrens:
+            body_sig, scan_sig, post_sig = cls._node_query_signature(node)
+            placed = False
+            for idx, kept in enumerate(result):
+                k_body, k_scan, k_post = cls._node_query_signature(kept)
+                if scan_sig != k_scan or post_sig != k_post:
+                    continue
+                if body_sig == k_body:
+                    body_ok = True
+                elif len(body_sig) == 1 and len(k_body) == 1 and body_sig and k_body:
+                    # 仅允许相差血管后缀（如 全腹部 / 全腹部动脉），避免误并不同部位
+                    # 防御性检查：确保集合非空
+                    b, kb = next(iter(body_sig)), next(iter(k_body))
+                    # 验证后缀必须是完整的"动脉"或"静脉"，且基础部分非空
+                    # 避免"主"和"主动脉"这种子串巧合被错误匹配
+                    body_ok = False
+                    if kb.startswith(b) and len(b) > 0 and kb[len(b):] in ('动脉', '静脉'):
+                        body_ok = True
+                    elif b.startswith(kb) and len(kb) > 0 and b[len(kb):] in ('动脉', '静脉'):
+                        body_ok = True
+                else:
+                    body_ok = False
+                if not body_ok:
+                    continue
+                # 重复：保留 body 更具体（总长度更长）的节点
+                kept_len = sum(len(s) for s in k_body)
+                node_len = sum(len(s) for s in body_sig)
+                if node_len > kept_len:
+                    result[idx] = node
+                placed = True
+                break
+            if not placed:
+                result.append(node)
+        return result
 
     def batch_match(self, items: List[Dict[str, str]],
                     version: str = "V3.8.2") -> Dict[str, List[Tuple[str, str]]]:

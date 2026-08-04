@@ -14,10 +14,14 @@
 5. merge_no_body（无部位节点合并）
 6. split_multi_body（多部位节点分裂）
 7. merge_nodes（节点间上下位合并）
-8. body_2process_remap（3步级联×5步_db_disambiguity）
+8. body_2process_remap（3步级联×5步_db_disambiguity；末尾 _dedup_identical_nodes 去重）
 8.5. normalize_vascular_nodes（CTA/CTV/MRA/MRV归一化）
+8.6. _dedup_query_equivalent_nodes（2026-08-04 新增，按 body/scan/post 查询签名去重影子节点）
 9. find_default_process（默认处理方式填充）
 10. lookup_standard（标准项查询，DR有3级降级）
+
+### dup_set 影子节点陷阱（2026-08-04 修复的关键缺陷）
+括号缩写(CTPA/CE-MRA)被 tokenizer 二次映射 + "平扫+增强"残留节点经血管归一化 → 产生与主节点查询等价的影子节点 → lookup_standard 的 dup_set 拦截重复候选成空块 → orchestrator `has_unmatched_node` 误判降为 ambiguous。修复=8.6 去重。真实签名：`lookup_standard(childrens, query_fields, process_type, modality, version)`、`normalize_vascular_nodes(childrens, process_type, modality)`。引擎真实代码在本地 `src/match_service/engine/match_engine_v2/`（非 acrac_backend shared）。
 
 ### 模态识别是三级机制
 1. 入口：_normalize_modality()（20+别名映射）

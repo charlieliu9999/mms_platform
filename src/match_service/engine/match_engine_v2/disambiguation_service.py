@@ -133,12 +133,36 @@ class DisambiguationService:
     def body_2process_remap(self, childrens: List[MatchNode], process_type: str,
                             modality: str, version: str) -> List[MatchNode]:
         if modality in ('CT', 'MR'):
-            return self._body_2process_remap_ct_mr(
+            result = self._body_2process_remap_ct_mr(
                 childrens, 'scan', 'post', modality, version)
         elif modality == 'DR':
-            return self._body_2process_remap_dr(
+            result = self._body_2process_remap_dr(
                 childrens, 'position', 'scan', modality, version)
-        return childrens
+        else:
+            return childrens
+        return self._dedup_identical_nodes(result)
+
+    @staticmethod
+    def _dedup_identical_nodes(childrens: List[MatchNode]) -> List[MatchNode]:
+        """去除 remap 产生的完全相同节点（同 raw + 同 body/process 组合）。
+
+        括号缩写（如 "(CTPA)"）与主扫描词解析到同一实体时会产生重复节点；
+        lookup_standard 的 dup_set 使第二个重复节点拿不到标准项，
+        进而被 orchestrator 误判为"有实体未匹配"导致 ambiguous 降级。
+        """
+        seen = set()
+        result = []
+        for node in childrens:
+            key_parts = []
+            for pos in sorted(node.pos_dict.keys()):
+                vals = tuple(sorted(node.std_names[j] for j in node.pos_dict[pos]))
+                key_parts.append((pos, vals))
+            key = (node.raw_str, tuple(key_parts))
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(node)
+        return result
 
     def _body_2process_remap_ct_mr(self, childrens: List[MatchNode],
                                     process1: str, process2: str,
@@ -168,7 +192,9 @@ class DisambiguationService:
             node_to_add += _add
             node_to_del += _del
 
-        for i, node in node_to_add:
+        # 逆序插入避免索引失效：每次插入会移动后续元素，
+        # 从右向左插入可确保左侧索引保持有效
+        for i, node in sorted(node_to_add, key=lambda x: x[0], reverse=True):
             childrens.insert(i, node)
         for node in node_to_del:
             if node in childrens:
@@ -189,7 +215,9 @@ class DisambiguationService:
             node_to_add += _add
             node_to_del += _del
 
-        for i, node in node_to_add:
+        # 逆序插入避免索引失效：每次插入会移动后续元素，
+        # 从右向左插入可确保左侧索引保持有效
+        for i, node in sorted(node_to_add, key=lambda x: x[0], reverse=True):
             childrens.insert(i, node)
         for node in node_to_del:
             if node in childrens:
