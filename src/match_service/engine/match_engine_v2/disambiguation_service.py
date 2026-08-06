@@ -155,7 +155,14 @@ class DisambiguationService:
         for node in childrens:
             key_parts = []
             for pos in sorted(node.pos_dict.keys()):
-                vals = tuple(sorted(node.std_names[j] for j in node.pos_dict[pos]))
+                # 添加索引边界检查，防止 pos_dict 中的过期索引
+                valid_indices = [j for j in node.pos_dict[pos] if j < len(node.std_names)]
+                if len(valid_indices) != len(node.pos_dict[pos]):
+                    logger.warning(
+                        f"Node '{node.raw_str}' has invalid indices for pos '{pos}': "
+                        f"expected {len(node.pos_dict[pos])}, valid {len(valid_indices)}"
+                    )
+                vals = tuple(sorted(node.std_names[j] for j in valid_indices))
                 key_parts.append((pos, vals))
             key = (node.raw_str, tuple(key_parts))
             if key in seen:
