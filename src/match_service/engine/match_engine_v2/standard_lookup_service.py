@@ -51,6 +51,28 @@ class StandardLookupService:
             # 无默认标记，按 | 拆分所有候选
             return value.split('|')
 
+    @staticmethod
+    def _expand_scan_abbreviation(scan: str) -> str:
+        """
+        展开扫描方式缩写为标准全称
+        用于扫描组合降级匹配（P1优化）
+        """
+        # 扫描方式缩写映射表
+        abbreviation_map = {
+            'DWI': '弥散加权成像(DWI)',
+            'DCE': '动态对比增强(DCE-MRI)',
+            'CTU': '尿路造影成像(CTU)',
+            'MRS': '磁共振波谱(MRS)',
+            'PWI': '灌注加权成像(PWI)',
+            'SWI': '磁敏感加权成像(SWI)',
+            'FLAIR': '液体衰减反转恢复序列(FLAIR)',
+            'MRA': '磁共振血管成像(MRA)',
+            'MRV': '磁共振静脉成像(MRV)',
+            'CTA': 'CT血管成像(CTA)',
+            'CTV': 'CT静脉成像(CTV)',
+        }
+        return abbreviation_map.get(scan, scan)
+
     # ─── Step 9: 补充默认处理方式 ──────────────────────────────────────────
 
     def find_default_process(self, childrens: List[MatchNode],
@@ -199,6 +221,32 @@ class StandardLookupService:
             if not hit.empty:
                 degraded = True
             results.append(hit)
+
+        # P1优化：扫描组合降级（平扫+DWI → 平扫 + DWI）
+        # 当精确匹配为空且 scan 包含组合值（含'+'）时，拆分降级匹配
+        # 注意：results 可能包含空 DataFrame，需要检查是否有实际命中
+        has_match = any(not r.empty for r in results)
+        if not has_match and scan and bodies:
+            for scan_str in scan:
+                if '+' in scan_str:
+                    # 拆分组合：'平扫+DWI' → ['平扫', 'DWI']
+                    components = [c.strip() for c in scan_str.split('+')]
+                    # 展开缩写
+                    expanded_components = []
+                    for comp in components:
+                        expanded = self._expand_scan_abbreviation(comp)
+                        expanded_components.append(expanded)
+
+                    # 降级查询：用分量匹配
+                    mask = (
+                        df['three_level_name'].isin(bodies) &
+                        df['scan_name'].isin(expanded_components) &
+                        ((df['post_processing_name'] == '') | df['post_processing_name'].isna())
+                    )
+                    hit = df[mask]
+                    if not hit.empty:
+                        degraded = True
+                        results.append(hit)
 
         if results:
             combined = pd.concat(results).drop_duplicates(subset=['checkitem_name'])
