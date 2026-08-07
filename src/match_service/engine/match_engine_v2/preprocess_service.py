@@ -6,6 +6,7 @@ from typing import List, Tuple
 
 import pandas as pd
 
+from .bracket_modifier_handler import BracketModifierHandler
 from .constants import (
     CHN_PUNCT,
     ENG_PUNCT,
@@ -28,25 +29,33 @@ class PreprocessService:
             pre_rules: {modality: pd.DataFrame} 预处理规则
         """
         self.pre_rules = pre_rules
+        self.bracket_handler = BracketModifierHandler()
 
-    def preprocess(self, text: str, modality: str, version: str) -> str:
+    def preprocess(self, text: str, modality: str, version: str) -> Tuple[str, BracketModifierHandler]:
         """
         预处理文本
 
         步骤：
+        0. 保护方括号修饰语（面神经[颅外段]）
         1. 全角→半角
         2. 中文标点→英文标点
         3. 特殊字符替换
         4. 脊椎节段补全
         5. 数据库规则替换
+
+        Returns:
+            (处理后的文本, 方括号处理器) - 处理器用于后续恢复
         """
+        # 0. 保护方括号修饰语（在所有其他处理之前）
+        text = self.bracket_handler.protect_brackets(text)
+
         text = self._convert_full2half(text)
         text = self._convert_chn2eng(text)
         text = self._normalize_special_chars(text)
         text = self._expand_left_right(text)
         text = self._complete_vertebra_segments(text)
         text = self._apply_db_rules(text, modality, version)
-        return text
+        return text, self.bracket_handler
 
     @staticmethod
     def _convert_full2half(text: str) -> str:

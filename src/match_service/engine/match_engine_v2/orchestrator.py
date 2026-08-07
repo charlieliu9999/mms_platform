@@ -266,10 +266,12 @@ class MatchEngineOrchestrator:
         match_info = {
             'data': [], 'check_item': records, 'num_standard': 0, 'score': 10}
 
-        # Step 1: 预处理
-        records = self.preprocess_service.preprocess(records, modality, version)
+        # Step 1: 预处理（包含方括号保护）
+        records, bracket_handler = self.preprocess_service.preprocess(records, modality, version)
         if trace is not None:
             trace['1-preprocess'] = records
+            if bracket_handler.get_protected_terms():
+                trace['1-bracket_protected'] = bracket_handler.get_protected_terms()
 
         # Step 2: 拆分子项
         record_split = self.preprocess_service.split_record(records, modality)
@@ -334,6 +336,19 @@ class MatchEngineOrchestrator:
             childrens, query_fields, process_type, modality, version)
         if trace is not None:
             trace['10-lookup_standard'] = [str(n) for n in childrens]
+
+        # Step 11: 恢复方括号修饰语（在结果输出前）
+        if bracket_handler.get_protected_terms():
+            for node in childrens:
+                # 恢复 raw_str
+                node.raw_str = bracket_handler.restore_brackets(node.raw_str)
+                # 恢复 standard_check_name 中的占位符
+                node.standard_check_name = [
+                    bracket_handler.restore_brackets(name)
+                    for name in node.standard_check_name
+                ]
+            if trace is not None:
+                trace['11-bracket_restored'] = [str(n) for n in childrens]
 
         # 汇总
         for node in childrens:
