@@ -35,6 +35,14 @@ exact(1.0) / partial(0.8) / degraded(0.6) / ambiguous(0.4) / none(0.0) / error(0
 - 用 position（正位/侧位）作为 process_type，非 scan
 - 查询有3级降级：POSITION_FALLBACK → POSITION_DECOMPOSE → POSITION_CONTAINS
 
+### 组合方案拆解机制（2026-08-04 确认）
+- **部位拆解：支持**。Step6 split_multi_body（多 body 实体拆多节点）+ _split_body（单 body 含|）+ Step4 BSPB 分裂；`颅脑、颈椎MR平扫`/`MR颅脑平扫+颈椎平扫` 均正确拆成 2 节点各自 exact。
+- **扫描方案拆解：不支持，且反向合并**。Step7 merge_nodes._merge_process 用 nlp_phrase_map(step='process') 规则把多个 scan 实体合并成整串：MR `弥散加权成像(DWI)|平扫→平扫+DWI`、`增强|平扫→平扫+增强`；CT 还有 `平扫+增强+CTU` 等。无 split_multi_scan 对称机制。
+- 合并是"赌标准库有组合项"：标准库 `平扫+增强` 有 299 条（含颅脑）→ 合并后直接 exact；`平扫+DWI` 全库仅 1 条(全脊柱) → 颅脑/盆腔合并后必 miss → none。
+- lookup 层 `_query_ct_mr` 用 `scan_name.isin(scan)` 集合查询，天然支持一节点多 scan 返回多标准项；瓶颈在 Step7 合并 + 标准库组合项缺失，不在 lookup。
+- 修复方向：lookup 对含 `+` 的 scan 值 miss 时按 `+` 拆分量组件重查（需 DWI→弥散加权成像(DWI) 缩写展开），命中标 degraded；不可删除合并规则（会砸掉 299 条平扫+增强直接命中）。
+- 验证脚本：scripts/trace_split_support.py。
+
 ### 数据表
 - nlp_medical_dict(2,435) / nlp_phrase_map(7,839) / nlp_ambiguity(1,229)
 - nlp_checkitem_standard 已改名 nlp_checkitem_standard_deprecated（迁移 20260804_1200），standard_check_items 为唯一标准表

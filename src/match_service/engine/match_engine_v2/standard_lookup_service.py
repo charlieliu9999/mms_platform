@@ -19,6 +19,20 @@ if TYPE_CHECKING:
     from .disambiguation_service import DisambiguationService
 
 
+# 部位等价映射表 (P2修复：统一引擎归一化与标准库命名差异)
+BODY_PART_EQUIVALENTS = {
+    "盆腔及盆底结构": ["盆腔及盆底结构", "盆腔"],
+    "盆腔": ["盆腔", "盆腔及盆底结构"],
+    "四肢及关节": ["四肢及关节", "四肢", "关节"],
+    "四肢": ["四肢", "四肢及关节"],
+    "关节": ["关节", "四肢及关节"],
+    "颅脑": ["颅脑", "脑", "头颅"],
+    "脑": ["脑", "颅脑"],
+    "全腹部": ["全腹部", "腹部"],
+    "腹部": ["腹部", "全腹部"],
+}
+
+
 class StandardLookupService:
     """
     Step 9: 补充默认处理方式
@@ -29,6 +43,23 @@ class StandardLookupService:
                  disamb_service: 'DisambiguationService'):
         self.data_loader = data_loader
         self.disamb_service = disamb_service
+
+    @staticmethod
+    def _expand_body_equivalents(bodies: List[str]) -> List[str]:
+        """
+        扩展部位列表，包含所有等价名称 (P2修复)
+
+        Args:
+            bodies: 原始部位列表
+
+        Returns:
+            扩展后的部位列表（去重）
+        """
+        expanded = set(bodies)  # 保留原始名称
+        for body in bodies:
+            if body in BODY_PART_EQUIVALENTS:
+                expanded.update(BODY_PART_EQUIVALENTS[body])
+        return list(expanded)
 
     @staticmethod
     def _resolve_default_branch(value: str) -> List[str]:
@@ -183,9 +214,12 @@ class StandardLookupService:
         results = []
         degraded = False
 
+        # P2修复：扩展部位等价名称（盆腔 ↔ 盆腔及盆底结构）
+        bodies_expanded = self._expand_body_equivalents(bodies) if bodies else []
+
         if post:
             mask = (
-                df['three_level_name'].isin(bodies) &
+                df['three_level_name'].isin(bodies_expanded) &
                 df['scan_name'].isin(scan) &
                 df['post_processing_name'].isin(post)
             )
@@ -193,7 +227,7 @@ class StandardLookupService:
 
         if scan:
             mask = (
-                df['three_level_name'].isin(bodies) &
+                df['three_level_name'].isin(bodies_expanded) &
                 df['scan_name'].isin(scan) &
                 ((df['post_processing_name'] == '') | df['post_processing_name'].isna())
             )
@@ -260,8 +294,12 @@ class StandardLookupService:
         degraded = False
         position = position or []
 
-        expanded_bodies = list(bodies)
-        for b in bodies:
+        # P2修复：先应用部位等价映射
+        bodies_with_equiv = self._expand_body_equivalents(bodies) if bodies else bodies
+
+        # 再扩展左右侧
+        expanded_bodies = list(bodies_with_equiv)
+        for b in bodies_with_equiv:
             for prefix in ('双侧', '左侧', '右侧'):
                 expanded_bodies.append(prefix + b)
         expanded_bodies = list(set(expanded_bodies))
@@ -325,6 +363,9 @@ class StandardLookupService:
         if not positions:
             return pd.DataFrame(), False
 
+        # P2修复：扩展部位等价名称
+        bodies_expanded = self._expand_body_equivalents(bodies) if bodies else []
+
         all_positions = set(positions)
         for pos in positions:
             if pos in POSITION_FALLBACK:
@@ -332,7 +373,7 @@ class StandardLookupService:
         all_positions_list = list(all_positions)
 
         mask = (
-            df['three_level_name'].isin(bodies) &
+            df['three_level_name'].isin(bodies_expanded) &
             df['position_name'].isin(all_positions_list) &
             (df['device_type_name'] == 'DR')
         )

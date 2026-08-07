@@ -113,3 +113,70 @@ trace 显示部位归一化工作良好，**不是瓶颈**：
 
 - `scripts/analyze_ct_mr_unmatched.py`：全量归因（tier 分布 + none 细分 + 血管对照）
 - `scripts/trace_ct_mr_samples.py`：代表样本深度 trace（定位 lookup 失败环节）
+- `scripts/trace_split_support.py`：组合方案拆解支持性验证（部位拆解 vs 扫描方案拆解）
+
+---
+
+## 5. 组合方案拆解支持性分析（2026-08-04 补充）
+
+**问题**：`MR颅脑(平扫+DWI)` 期望拆为 `MR颅脑平扫` + `MR颅脑弥散加权成像(DWI)` 两个标准项。引擎是否支持这类拆解？
+
+### 5.1 结论速览
+
+| 拆解类型 | 支持情况 | 机制 |
+|---|---|---|
+| **部位拆解**（颅脑、颈椎 → 2 项） | ✅ 支持 | Step4 BSPB 分裂 + Step6 `split_multi_body` + `_split_body` |
+| **扫描方案拆解**（平扫+DWI → 2 项） | ❌ 不支持，且反向合并 | Step7 `_merge_process` 把多 scan 实体合并成整串 |
+
+### 5.2 部位拆解：已支持（实测证据）
+
+```
+输入: 颅脑、颈椎MR平扫   → tier=exact
+  Step7 拆为 2 节点: [颅脑|MR|平扫] + [颈椎|MR|平扫]  → 各自命中
+输入: MR颅脑平扫+颈椎平扫 → tier=exact
+  Step7 拆为 2 节点: [颅脑|平扫] + [颈椎|平扫]        → 各自命中
+```
+
+机制链：`split_multi_body`（一个节点多个 body 实体 → 每个 body 独立成节点并继承全部 scan/post）；`_split_body`（单个 body 含 `|` → 拆分）；Step8 `_scan_map`/`_post_map` 消歧表一对多 dst 也会生成多节点。
+
+### 5.3 扫描方案拆解：不支持，且存在主动合并机制（根因）
+
+实测 `MR颅脑(平扫+DWI)` 逐步 trace：
+
+```
+Step3 make_tree:        颅脑(body) | 平扫(scan) | 弥散加权成像(DWI)(scan)   ← 解析正确，两个独立 scan 实体
+Step7 merge_nodes:      颅脑(body) | 平扫+DWI(scan)                        ← 被合并成整串！
+Step10 lookup:          scan_name.isin(['平扫+DWI']) → 0 条 → tier=none
+```
+
+合并来自 `merge_nodes._merge_process` → `db_get_process_normal`，规则表 `nlp_phrase_map(step='process')`：
+
+| 模态 | 合并规则 |
+|---|---|
+| MR | `弥散加权成像(DWI)\|平扫 → 平扫+DWI` |
+| MR/CT | `增强\|平扫 → 平扫+增强` |
+| CT | `平扫\|增强\|尿路造影成像(CTU) → 平扫+增强+CTU` 等 |
+
+**为什么 `平扫+增强` 能成功而 `平扫+DWI` 失败**：合并机制本质是"赌标准库存在对应组合项"——
+
+| 组合 scan_method | 标准库条数 | 覆盖 |
+|---|---|---|
+| `平扫+增强` | 299 条 | 颅脑、全腹部、盆腔等大量部位 → 合并后直接 exact |
+| `平扫+DWI` | **仅 1 条** | 只有全脊柱 → 颅脑/盆腔合并后必然 miss |
+| `平扫+增强+CTU` | 1 条 | 全腹部 |
+
+MR 颅脑实际有 16 种 scan_method（含 `平扫`、`弥散加权成像(DWI)`、`平扫+增强`），唯独没有 `平扫+DWI`。
+
+### 5.4 lookup 层本身具备多输出能力
+
+`_query_ct_mr` 使用 `df['scan_name'].isin(scan)` **集合查询**：若节点保留两个独立 scan 实体（`平扫`、`弥散加权成像(DWI)`），本可同时返回 `MR颅脑平扫` + `MR颅脑弥散加权成像(DWI)` 两条标准项。**瓶颈不在 lookup，而在 Step7 的合并 + 标准库组合项缺失。**
+
+### 5.5 修复建议
+
+**推荐：lookup 组合降级拆解（小改动，不动节点结构）**
+
+在 Step10 `_query_ct_mr`/`_query_mr` 中：当 scan 值含 `+` 且 `isin` 查询为空时，按 `+` 拆分为分量（`平扫+DWI` → `平扫`、`DWI`），经缩写展开（`DWI→弥散加权成像(DWI)`、`CTU→尿路造影成像(CTU)` 等）后重查 `isin(分量)`，命中标 `degraded`。效果：`MR颅脑(平扫+DWI)` → 同时返回 `MR颅脑平扫` + `MR颅脑弥散加权成像(DWI)`。
+
+**不可删除合并规则**：`平扫+增强` 有 299 条标准项依赖合并后的整串直接 exact 命中，删除合并会全部退化为拆解匹配。正确顺序是：先精确整串匹配（现状保留），miss 后再降级拆解。
+
+备选（改动大，不推荐）：新增对称的 `split_multi_scan` 步骤在节点层面拆分——但合并发生在 Step7（split_multi_body 之后），需重排管线且影响 dup_set 去重与 orchestrator 评分，风险高。
