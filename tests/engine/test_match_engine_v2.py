@@ -16,6 +16,7 @@ async_engine = get_engine()
 # ─── Fixtures ──────────────────────────────────────────────────────────────
 
 # @pytest.fixture(scope="module")
+@pytest.fixture(scope="module")
 def event_loop():
     loop = asyncio.new_event_loop()
     # 全局 async_engine 的连接池可能持有绑定在其他模块 event loop 上的连接，
@@ -112,7 +113,7 @@ def _extract_standards(result: dict) -> set:
     return names
 
 
-@pytest.mark.parametrize("record,modality", CT_CASES + MR_CASES + DR_CASES + RF_MG_CASES)
+# @pytest.mark.parametrize("record,modality", CT_CASES + MR_CASES + DR_CASES + RF_MG_CASES)
 # Phase A: 以下测试依赖 V1 引擎对比，已禁用
 # def test_v2_matches_v1(v1_engine, v2_engine, record, modality):
 #     """V2 引擎的标准项输出应与 V1 一致"""
@@ -131,8 +132,7 @@ def _extract_standards(result: dict) -> set:
 #     )
 
 
-# @pytest.mark.parametrize("record,modality,expected_keyword", BILATERAL_FIX_CASES)
-
+@pytest.mark.parametrize("record,modality,expected_keyword", BILATERAL_FIX_CASES)
 def test_v2_bilateral_fix(v2_engine, record, modality, expected_keyword):
     """
     V2 双侧匹配修复验证（与 V1 行为不同，V2 更正确）
