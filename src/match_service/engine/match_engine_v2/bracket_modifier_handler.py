@@ -1,7 +1,8 @@
 """
 方括号修饰语处理器
 
-处理 `面神经[颅外段]` 等方括号修饰语，防止被分词器拆分成独立实体。
+剥离 `CT头部平扫[薄层]`、`MR腰椎平扫[抑脂]` 等方括号修饰语，防止干扰标准项匹配。
+修饰语被直接移除，不参与后续匹配逻辑。
 """
 import re
 from typing import Dict, Tuple
@@ -20,16 +21,17 @@ class BracketModifierHandler:
 
     def protect_brackets(self, text: str) -> str:
         """
-        保护方括号修饰语，替换为占位符
+        剥离方括号修饰语（直接移除）
 
         示例：
-            'MR面神经[颅外段](平扫)' -> 'MR面神经__BRACKET_0__(平扫)'
+            'MR面神经[颅外段](平扫)' -> 'MR面神经(平扫)'
+            'CT头部平扫[薄层]' -> 'CT头部平扫'
 
         Args:
             text: 原始文本
 
         Returns:
-            处理后的文本（方括号被占位符替换）
+            处理后的文本（方括号及其内容已移除）
         """
         self._protected_map.clear()
         self._counter = 0
@@ -42,41 +44,37 @@ class BracketModifierHandler:
             base = match.group(1)  # 主体部位
             modifier = match.group(2)  # 方括号内修饰语
 
-            # 生成占位符
-            placeholder = f'{self.PLACEHOLDER_PREFIX}{self._counter}{self.PLACEHOLDER_SUFFIX}'
-
-            # 保存原始组合（包含方括号，用于恢复）
+            # 保存被移除的修饰语（用于审计/调试）
             original_with_bracket = f'{base}[{modifier}]'
-            self._protected_map[placeholder] = original_with_bracket
+            stripped_key = f'STRIPPED_{self._counter}'
+            self._protected_map[stripped_key] = original_with_bracket
 
             self._counter += 1
 
-            # 返回：主体 + 占位符（不包含方括号，避免被再次匹配）
-            return placeholder
+            # 直接返回主体部位，修饰语被剥离
+            return base
 
         result = re.sub(pattern, replacer, text)
         return result
 
     def restore_brackets(self, text: str) -> str:
         """
-        恢复方括号修饰语
+        恢复方括号修饰语（已改为剥离策略，此方法保持向后兼容）
 
         Args:
-            text: 包含占位符的文本
+            text: 处理后的文本
 
         Returns:
-            恢复后的文本
+            文本（方括号已被剥离，不再恢复）
         """
-        result = text
-        for placeholder, original in self._protected_map.items():
-            result = result.replace(placeholder, original)
-        return result
+        # 方括号已在 protect_brackets 中被剥离，不需要恢复
+        return text
 
     def get_protected_terms(self) -> Dict[str, str]:
         """
-        获取所有被保护的方括号术语
+        获取所有被剥离的方括号术语（用于审计/调试）
 
         Returns:
-            {占位符: 原始术语} 映射
+            {STRIPPED_N: 原始术语} 映射
         """
         return self._protected_map.copy()

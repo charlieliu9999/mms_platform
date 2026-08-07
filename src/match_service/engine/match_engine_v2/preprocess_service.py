@@ -36,7 +36,7 @@ class PreprocessService:
         预处理文本
 
         步骤：
-        0. 保护方括号修饰语（面神经[颅外段]）
+        0. 剥离方括号修饰语（CT头部平扫[薄层] -> CT头部平扫）
         1. 全角→半角
         2. 中文标点→英文标点
         3. 特殊字符替换
@@ -44,9 +44,9 @@ class PreprocessService:
         5. 数据库规则替换
 
         Returns:
-            (处理后的文本, 方括号处理器) - 处理器用于后续恢复
+            (处理后的文本, 方括号处理器) - 处理器用于审计被剥离的内容
         """
-        # 0. 保护方括号修饰语（在所有其他处理之前）
+        # 0. 剥离方括号修饰语（在所有其他处理之前）
         text = self.bracket_handler.protect_brackets(text)
 
         text = self._convert_full2half(text)
