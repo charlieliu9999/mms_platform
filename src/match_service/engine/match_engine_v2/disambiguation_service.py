@@ -119,7 +119,7 @@ class DisambiguationService:
             if len(bodypart1_) > 1 or len(bodypart2_) > 1:
                 body_ = set(bodypart1_) & set(bodypart2_)
                 if body_:
-                    return list(body_)
+                    return sorted(body_)
             for ver in VERSION_FALLBACK.get(version, [version]):
                 dst_body, msg = self._db_find_body(
                     f'{bodypart1}|{bodypart2}', ver, 'global_map')
@@ -430,13 +430,27 @@ class DisambiguationService:
             body_idx = node.pos_dict['body'][0]
             body = node.std_names[body_idx]
 
+            # 非血管造影关键词白名单（排除）
+            # 这些造影类型不应该被识别为血管成像
+            NON_VASCULAR_CONTRAST = {
+                '尿路', 'CTU', 'T管', '关节', '排粪', 
+                '插管', '引流管', '碘水', '碘油', '淋巴管',
+                '胆道', 'ERCP', 'PTC', '胰胆管', '穿刺',
+                '口服', '钡餐', '灌肠', '逆行', '泌尿系',
+                '经内镜', '经皮经肝', 'MRCP', 'MRU',
+            }
+
             is_vascular = (
                 any(k in raw for k in (
                     '血管', 'CTA', 'CTV', 'MRA', 'MRV',
                     '动脉', '静脉', '冠脉', '冠状动脉'))
                 or any(k in scan_text for k in (
                     '血管', 'CTA', 'CTV', 'MRA', 'MRV'))
-                or ('造影' in raw and modality == 'CT')
+                or (
+                    '造影' in raw 
+                    and modality == 'CT'
+                    and not any(k in raw for k in NON_VASCULAR_CONTRAST)
+                )
             )
             if not is_vascular:
                 continue
@@ -466,14 +480,51 @@ class DisambiguationService:
                     scan = ('动脉血管增强成像(CE-MRA)' if enhanced
                             else '动脉血管成像(MRA)')
 
-            scan_indices = node.pos_dict.get('scan', [])
+            scan_indices = list(node.pos_dict.get('scan', []))
             if scan_indices:
-                first_scan = scan_indices[0]
-                node.std_names[first_scan] = scan
-                for extra_idx in scan_indices[1:]:
-                    if node.std_names[extra_idx] in (
-                            '增强', '平扫', '普通扫描', '普通'):
+                # 不能依赖 scan_indices[0]：处理方式归一化曾经由 set 生成列表，
+                # 不同 PYTHONHASHSEED 会把“平扫+增强”或“MRA”随机放在首位。
+                vascular_indices = [
+                    idx for idx in scan_indices
+                    if re.search(r'血管|CTA|CTV|MRA|MRV', node.std_names[idx], re.I)
+                ]
+                target_idx = vascular_indices[0] if vascular_indices else scan_indices[0]
+
+                explicit_base_enhanced = (
+                    modality == 'MR' and (
+                        vessel_type == 'artery' and bool(re.search(
+                            r'(?:MRA\s*\+\s*CE-MRA|CE-MRA\s*\+\s*MRA)', raw
+                        ))
+                        or vessel_type == 'vein' and bool(re.search(
+                            r'(?:MRV\s*\+\s*CE-MRV|CE-MRV\s*\+\s*MRV)', raw
+                        ))
+                    )
+                )
+                if explicit_base_enhanced:
+                    base_scan = (
+                        '动脉血管成像(MRA)'
+                        if vessel_type == 'artery'
+                        else '静脉血管成像(MRV)'
+                    )
+                    node.std_names[target_idx] = base_scan
+                    if scan not in node.std_names:
+                        node.add_entity('增强血管成像', 'scan', scan)
+                else:
+                    node.std_names[target_idx] = scan
+
+                # 血管语义已由上面的 scan 表达，普通平扫/增强组合不能继续作为
+                # 独立扫描方式参与查表，否则可能误命中“全腹部平扫+增强”。
+                plain_scans = {
+                    '增强', '平扫', '平扫+增强', '普通扫描', '普通',
+                }
+                for extra_idx in scan_indices:
+                    if extra_idx != target_idx and node.std_names[extra_idx] in plain_scans:
                         node.pos_types[extra_idx] = 'other'
+                # pos_types 改动后重建索引，避免后续仍读取已降级 scan。
+                for pos in node.pos_dict:
+                    node.pos_dict[pos] = []
+                for idx, pos in enumerate(node.pos_types):
+                    node.pos_dict.setdefault(pos, []).append(idx)
             else:
                 node.add_entity('血管成像', 'scan', scan)
 
@@ -662,7 +713,7 @@ class DisambiguationService:
                                      body: str) -> Tuple[str, Optional[str], Optional[str]]:
         if body == '肝动静脉':
             return 'found', body, '动静脉血管成像(CTA+CTV)'
-        process_list = list(set(re.split('[|&]', process)))
+        process_list = sorted(set(re.split('[|&]', process)))
         if len(process_list) < 2:
             return 'unfound', None, None
         if '静脉' in body and '|' not in body:
@@ -677,7 +728,7 @@ class DisambiguationService:
 
     def _db_determin_body_by_process(self, process: str,
                                      body: str) -> Tuple[str, Optional[str], Optional[str]]:
-        body_list = list(set(re.split('[|&]', body)))
+        body_list = sorted(set(re.split('[|&]', body)))
         if len(body_list) < 2:
             return 'unfound', None, None
         bodies = []
@@ -699,7 +750,7 @@ class DisambiguationService:
         if (len(process) > 0 or body in ('动脉', '静脉')
                 or ('动脉' not in body and '静脉' not in body)):
             return 'unfound', None, None
-        body_list = list(set(re.split('[|&]', body)))
+        body_list = sorted(set(re.split('[|&]', body)))
         versions = VERSION_FALLBACK.get(version, [version])
         df_0 = pd.DataFrame()
         for ver in versions:
@@ -799,10 +850,10 @@ class DisambiguationService:
                 dst_set.add(row['dst_word'])
 
         if dst_set:
-            return 'found', list(dst_set)
+            return 'found', sorted(dst_set)
         elif has_amb:
-            return 'found', list(in_process_set)
-        return 'unfound', list(in_process_set)
+            return 'found', sorted(in_process_set)
+        return 'unfound', sorted(in_process_set)
 
     def lookup_disambiguity(self, body: str, process: str,
                             modality: str, version: str) -> Optional[Tuple[str, str]]:
