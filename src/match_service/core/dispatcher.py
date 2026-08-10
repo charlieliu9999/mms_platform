@@ -8,12 +8,18 @@
 4. 算法失败（tier=none/ambiguous）→ 记录 feedback，异步交 L3 Agent
 """
 import logging
+import re
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..cache.service import CacheService
 from ..config import get_settings
+from ..engine.modality_resolver import (
+    infer_text_modality,
+    mentioned_modalities,
+    resolve_effective_modality,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +62,8 @@ class MatchDispatcher:
         'PET/MR': 'PET/MR',   # 正电子发射计算机断层显像/MR（代码11）
         'PET-MR': 'PET/MR',
 
-        # 介入系列
+        # 介入/血管造影系列。procedure_dictionary 使用 AN 表示诊断性血管造影。
+        'AN': 'DSA',
         'ANGIO': 'DSA',
         'DSA': 'DSA',
 
@@ -94,15 +101,102 @@ class MatchDispatcher:
 
         return normalized
 
+    @staticmethod
+    def _apply_result_review_policy(
+        result: dict,
+        text: str,
+        effective_modality: str,
+        text_routed: bool,
+        source_modality: Optional[str] = None
+    ) -> None:
+        """
+        将跨模态模糊命中及未完整覆盖的联合项目降为待审核。
+
+        优化：对高置信度路由场景（如乳腺X线→MG），允许exact/partial结果直接通过。
+        """
+        if result.get("engine") in {
+            "standard_name_exact", "standard_name_exact_collision"
+        }:
+            return
+
+        requires_review = False
+        reason = ""
+        tier = result.get("tier", "none")
+
+        if text_routed:
+            # 高置信度路由场景：乳腺X线→MG
+            # 业务规则：包含"乳腺/乳房/钼靶"关键词的X线/DR项目，路由到MG是确定的
+            is_breast_xray_to_mg = (
+                source_modality in ("DR", "XR")
+                and effective_modality == "MG"
+                and re.search(r"(X\s*线|DR|XR).*(乳腺|乳房|钼靶)", text, re.IGNORECASE)
+            )
+
+            if is_breast_xray_to_mg:
+                # 乳腺X线路由是高置信度场景，放宽审核策略
+                if tier in {"exact", "partial", "degraded"}:
+                    # exact/partial/degraded都允许直接通过
+                    # 原因：乳腺X线→MG路由是明确的业务规则，即使是降级匹配也可信
+                    requires_review = False
+                elif tier == "ambiguous":
+                    # ambiguous仍需审核（引擎内部已标记为歧义）
+                    requires_review = True
+                    reason = "routed_result_requires_review"
+            else:
+                # 其他跨模态路由保持原审核策略
+                routed_multi_us = (
+                    effective_modality == "US"
+                    and result.get("num_standard", 0) > 1
+                )
+                if tier in {"partial", "degraded"} or routed_multi_us:
+                    requires_review = True
+                    reason = "routed_result_requires_review"
+
+        explicit_modalities = mentioned_modalities(text)
+        if len(explicit_modalities) > 1 and result.get("num_standard", 0) > 0:
+            matched_modalities = set()
+            for block in result.get("data", []) or []:
+                for standard in block.get("standard", []) or []:
+                    standard_name = str(standard.get("name", "")).lstrip("* ")
+                    inferred = infer_text_modality(standard_name)
+                    if inferred:
+                        matched_modalities.add(inferred)
+            if not explicit_modalities.issubset(matched_modalities):
+                requires_review = True
+                reason = "compound_item_incomplete"
+
+        if requires_review and tier not in {"none", "error"}:
+            result["tier"] = "ambiguous"
+            result["confidence"] = 0.4
+            result["reason"] = reason
+
     async def match(self, text: str, modality: str, version: str = "V3.8.2") -> dict:
         """单条匹配：L1 → L2 → (L3 async)"""
 
-        # ── 模态归一化 ──
-        normalized_modality = self._normalize_modality(modality)
+        # ── 模态归一化 + 高确定性文本路由 ──
+        source_modality = self._normalize_modality(modality)
+        effective_modality = resolve_effective_modality(text, source_modality)
+        if effective_modality != source_modality:
+            logger.info(
+                "[Dispatcher] 文本模态路由: %s → %s (%s)",
+                source_modality, effective_modality, text[:40],
+            )
 
         # ── L1: 映射库查询 ──
-        cached = await self.cache_service.lookup(text, normalized_modality)
+        cached = await self.cache_service.lookup(
+            text, effective_modality, self.engine_holder.rule_version
+        )
         if cached is not None:
+            # source_modality 属于本次请求，不能沿用首次写缓存时的来源值。
+            cached["source_modality"] = source_modality
+            cached.setdefault("effective_modality", effective_modality)
+            text_routed = effective_modality != source_modality
+            cached["modality_routed"] = text_routed
+            self._apply_result_review_policy(
+                cached, text, effective_modality, text_routed, source_modality
+            )
+            if cached.get("tier") in {"none", "ambiguous"}:
+                await self._record_feedback(text, effective_modality, cached)
             logger.debug(f"[Dispatcher] L1 命中: {text[:30]}...")
             return cached
 
@@ -111,19 +205,38 @@ class MatchDispatcher:
         if engine is None or not engine.is_ready:
             return self._error_result(text, "引擎未就绪")
 
-        result = engine.match(text, normalized_modality, version)
+        result = engine.match(text, effective_modality, version)
+        # source 属于本次请求；exact-name 层接收到的是 effective modality，
+        # 因此这里必须覆盖而不是 setdefault。
+        result["source_modality"] = source_modality
+        result.setdefault("effective_modality", effective_modality)
+        text_routed = effective_modality != source_modality
+        result["modality_routed"] = text_routed
+
+        self._apply_result_review_policy(
+            result, text, effective_modality, text_routed, source_modality
+        )
+
         tier = result.get("tier", "none")
         confidence = result.get("confidence", 0.0)
 
         # ── L1 回写：高置信结果自动入缓存 ──
         if tier in AUTO_CACHE_TIERS and confidence >= AUTO_CACHE_MIN_CONFIDENCE:
-            source = "agent_confirmed" if confidence >= 0.95 else "algorithm"
-            await self.cache_service.store(text, normalized_modality, result, confidence, source)
+            # 自动算法命中始终标记 algorithm；agent_confirmed 仅保留给经过
+            # Agent/人工确认的映射，避免把 exact=1.0 误当成已审核结果。
+            await self.cache_service.store(
+                text,
+                effective_modality,
+                result,
+                confidence,
+                "algorithm",
+                self.engine_holder.rule_version,
+            )
             logger.debug(f"[Dispatcher] L2→L1 回写: tier={tier}, conf={confidence:.2f}")
 
         # ── L3: 失败项记录 feedback（异步 Agent 处理）──
         if tier in ("none", "ambiguous"):
-            await self._record_feedback(text, normalized_modality, result)
+            await self._record_feedback(text, effective_modality, result)
 
         result["_cache_hit"] = False
         result["_tier"] = tier
