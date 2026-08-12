@@ -267,12 +267,36 @@ class MatchNode:
         node_list.append(new_node)
         return node_list
 
-    def standard(self) -> dict:
+    def standard(self, usage_stats: dict = None) -> dict:
+        """
+        返回标准化结果
+
+        Args:
+            usage_stats: 使用频率统计 {code: usage_count}，用于智能排序
+
+        Returns:
+            包含原始文本和标准项列表的字典
+
+        Phase 7: 智能排序优化
+        - 如果提供 usage_stats，按使用频率降序 → 字母序排序
+        - 否则按字母序排序（保持向后兼容）
+        """
+        # 组合 code 和 name
+        results = list(zip(self.standard_check_code, self.standard_check_name))
+
+        # Phase 7: 智能排序
+        if usage_stats:
+            # 使用频率降序 → 字母序（稳定性）
+            results.sort(key=lambda x: (-usage_stats.get(x[0], 0), x[1]))
+        else:
+            # 默认按名称字母序（向后兼容）
+            results.sort(key=lambda x: x[1])
+
         return {
             'raw': self.raw_str,
             'standard': [
                 {'code': c, 'name': n}
-                for c, n in zip(self.standard_check_code, self.standard_check_name)
+                for c, n in results
             ],
         }
 

@@ -107,6 +107,9 @@ class MatchEngineOrchestrator:
         self.lookup_service = StandardLookupService(
             self.data_loader, self.disamb_service)
 
+        # Phase 7: 预加载使用统计（用于智能排序）
+        self.usage_stats_cache = await self._load_all_usage_stats()
+
         # 关键词引擎（US/SPECT/PET/OCT/DSA），透传本引擎的 DB engine
         # 使独立 match-service 的自建 engine 一路贯通到关键词引擎
         factory = self._kw_matcher_factory
@@ -550,9 +553,12 @@ class MatchEngineOrchestrator:
             if trace is not None:
                 trace['11-bracket_restored'] = [str(n) for n in childrens]
 
+        # Phase 7: 获取使用统计（用于智能排序）
+        usage_stats = self.usage_stats_cache.get(modality, {})
+
         # 汇总
         for node in childrens:
-            match_info['data'].append(node.standard())
+            match_info['data'].append(node.standard(usage_stats))
             match_info['num_standard'] += len(node.standard_check_name)
 
         score = factor_composite * 1
@@ -761,5 +767,57 @@ class MatchEngineOrchestrator:
                 )
                 result[key] = {'pairs': [], 'score': 0, 'tier': 'error',
                                'confidence': 0.0, 'reason': '', 'has_entity': None}
+
+        return result
+
+    async def _load_all_usage_stats(self) -> dict:
+        """
+        Phase 7: 加载所有模态的标准项使用统计（初始化时调用）
+
+        从 match_cache 表聚合各标准项的使用频率
+
+        Returns:
+            {modality: {checkitem_code: usage_count}} 嵌套字典
+        """
+        from sqlalchemy import text
+
+        try:
+            async with self.engine.begin() as conn:
+                # 从缓存表统计各标准项的命中次数（按模态分组）
+                result = await conn.execute(
+                    text("""
+                        SELECT
+                            modality,
+                            jsonb_array_elements(result_codes) AS code,
+                            SUM(hit_count) AS usage_count
+                        FROM match_cache
+                        WHERE result_codes IS NOT NULL
+                        GROUP BY modality, code
+                    """)
+                )
+
+                all_stats = {}
+                for row in result:
+                    modality = row[0]
+                    code = row[1]
+                    # 移除 JSON 字符串的引号
+                    if isinstance(code, str):
+                        code = code.strip('"')
+
+                    if modality not in all_stats:
+                        all_stats[modality] = {}
+                    all_stats[modality][code] = int(row[2])
+
+                logger.info(
+                    f"Phase 7: 加载使用统计完成 - "
+                    f"{len(all_stats)} 个模态, "
+                    f"总计 {sum(len(v) for v in all_stats.values())} 个标准项"
+                )
+                return all_stats
+
+        except Exception as e:
+            # 统计加载失败不影响匹配功能，降级为字母序
+            logger.warning(f"Phase 7: 加载使用统计失败: {e}")
+            return {}
 
         return result
