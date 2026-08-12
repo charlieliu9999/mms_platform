@@ -56,6 +56,7 @@ RULE_TABLES: Dict[str, RuleTableSpec] = {
         soft_delete_col="is_active",       # B-08修复：使用正确的软删除列
         columns=["item_code", "item_name", "modality", "modality_code",
                  "body_part_l1", "body_part_l2", "body_part_l3",
+                 "position_name", "position_code", "device_type_name",
                  "scan_method", "post_processing", "version", "is_active"],
     ),
 }

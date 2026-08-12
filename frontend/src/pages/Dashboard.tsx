@@ -25,8 +25,15 @@ const DICT_TYPE_NAMES: Record<string, string> = {
 };
 
 const UNMATCHED_REASON_NAMES: Record<string, { label: string; color: string }> = {
+  unmatchable_by_design: { label: '设计上不可匹配', color: 'text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700' },
   lexicon_gap: { label: '词库映射缺失 (Lexicon Gap)', color: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800' },
   standard_lib_gap: { label: '标准库缺失 (Standard Gap)', color: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800' },
+  unsupported_modality: { label: '暂不支持的模态', color: 'text-cyan-700 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-950/40 border-cyan-200 dark:border-cyan-800' },
+  parser_ambiguity: { label: '解析歧义', color: 'text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-800' },
+  modality_route_review: { label: '模态路由待确认', color: 'text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800' },
+  standard_data_conflict: { label: '标准数据冲突', color: 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800' },
+  excluded_intervention: { label: '治疗性介入排除', color: 'text-pink-700 dark:text-pink-400 bg-pink-50 dark:bg-pink-950/40 border-pink-200 dark:border-pink-800' },
+  excluded_non_imaging: { label: '非影像项目排除', color: 'text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700' },
   needs_manual: { label: '需人工审核 (Needs Manual)', color: 'text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-800' },
   engine_error: { label: '匹配引擎异常 (Engine Exception)', color: 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800' },
 };

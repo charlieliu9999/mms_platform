@@ -11,6 +11,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from match_service.core.dispatcher import MatchDispatcher
+from match_service.engine.modality_resolver import resolve_effective_modality
 
 
 class TestModalityNormalization:
@@ -71,7 +72,9 @@ class TestModalityNormalization:
         assert dispatcher._normalize_modality('PET-MR') == 'PET/MR'
 
     def test_dsa_mapping(self, dispatcher):
-        """测试 DSA/ANGIO 映射"""
+        """测试 AN/DSA/ANGIO 映射"""
+        assert dispatcher._normalize_modality('AN') == 'DSA'
+        assert dispatcher._normalize_modality('an') == 'DSA'
         assert dispatcher._normalize_modality('DSA') == 'DSA'
         assert dispatcher._normalize_modality('ANGIO') == 'DSA'
 
@@ -136,6 +139,106 @@ class TestModalityNormalization:
         assert dispatcher._normalize_modality('CT-DE') == 'CT'   # 双能CT
         assert dispatcher._normalize_modality('CT-4D') == 'CT'   # 四维CT
         assert dispatcher._normalize_modality('cbct') == 'CT'    # 大小写不敏感
+
+
+class TestEffectiveModalityRouting:
+    """仅覆盖可自动执行的高确定性文本路由。"""
+
+    @pytest.mark.parametrize(
+        ("text", "source", "expected"),
+        [
+            ("甲状腺三维超声检查", "OTHER", "US"),
+            ("移动DR胸部", "OTHER", "DR"),
+            ("全身PET-CT", "OTHER", "PET/CT"),
+            ("ECT全身骨显像", "CT", "SPECT"),
+            ("US甲状腺常规超声检查", "DR", "US"),
+            ("X线乳腺(钼靶摄影)", "DR", "MG"),
+            ("X线上消化道造影", "DR", "RF"),
+            ("X线冠状动脉造影检查（诊断性）", "DR", "DSA"),
+        ],
+    )
+    def test_high_confidence_routes(self, text, source, expected):
+        assert resolve_effective_modality(text, source) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "source"),
+        [
+            ("CT冠状动脉血管成像联合超声心动图", "CT"),
+            ("CT/MRI/PET-CT(化疗前基线)", "CT"),
+            ("X线乳腺断层摄影+US乳腺常规超声检查", "DR"),
+            ("MR眼前节光学相干断层扫描(AS-OCT)", "OCT"),
+        ],
+    )
+    def test_compound_item_keeps_source_modality(self, text, source):
+        assert resolve_effective_modality(text, source) == source
+
+    def test_tcd_token_does_not_match_inside_ptcd(self):
+        assert resolve_effective_modality("经皮经肝胆管引流术(PTCD)", "IR") == "IR"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "X线冠状动脉造影(QFR计算)",
+            "X线乳腺立体定位真空辅助活组织检查（VABB）",
+        ],
+    )
+    def test_incomplete_procedure_routes_are_rejected(self, text):
+        assert resolve_effective_modality(text, "DR") == "DR"
+
+    @pytest.mark.asyncio
+    async def test_routed_degraded_result_requires_review(self):
+        holder = MagicMock()
+        holder.rule_version = "test-version"
+        holder.match_engine.is_ready = True
+        holder.match_engine.match.return_value = {
+            "check_item": "ECT全身骨显像",
+            "num_standard": 2,
+            "data": [{"raw": "ECT全身骨显像", "standard": [
+                {"code": "A", "name": "候选A"},
+                {"code": "B", "name": "候选B"},
+            ]}],
+            "tier": "degraded",
+            "confidence": 0.6,
+            "reason": "",
+        }
+        dispatcher = MatchDispatcher(AsyncMock(), holder)
+        dispatcher.cache_service.lookup = AsyncMock(return_value=None)
+        dispatcher.cache_service.store = AsyncMock()
+        dispatcher._record_feedback = AsyncMock()
+
+        result = await dispatcher.match("ECT全身骨显像", "CT")
+
+        assert result["effective_modality"] == "SPECT"
+        assert result["tier"] == "ambiguous"
+        assert result["confidence"] == 0.4
+        dispatcher.cache_service.store.assert_not_awaited()
+        dispatcher._record_feedback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_incomplete_compound_result_is_ambiguous(self):
+        holder = MagicMock()
+        holder.rule_version = "test-version"
+        holder.match_engine.is_ready = True
+        holder.match_engine.match.return_value = {
+            "check_item": "MR肝脏联合CT肝脏",
+            "num_standard": 1,
+            "data": [{"raw": "MR肝脏", "standard": [
+                {"code": "MR1", "name": "* MR肝脏(平扫)"},
+            ]}],
+            "tier": "exact",
+            "confidence": 1.0,
+            "reason": "",
+        }
+        dispatcher = MatchDispatcher(AsyncMock(), holder)
+        dispatcher.cache_service.lookup = AsyncMock(return_value=None)
+        dispatcher.cache_service.store = AsyncMock()
+        dispatcher._record_feedback = AsyncMock()
+
+        result = await dispatcher.match("MR肝脏联合CT肝脏", "MR")
+
+        assert result["tier"] == "ambiguous"
+        assert result["reason"] == "compound_item_incomplete"
+        dispatcher.cache_service.store.assert_not_awaited()
 
 
 if __name__ == '__main__':

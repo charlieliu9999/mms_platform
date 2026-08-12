@@ -92,12 +92,28 @@ export interface ProcedureItem {
   modality: string;
   um_status: string | null;   // open / resolved / wontfix / null
   um_reason: string | null;
+  last_matched: boolean | null;
+  last_tier: string | null;
+  last_confidence: number | null;
+  last_source: string | null;
+  last_effective_modality: string | null;
+  last_standards: { code: string; name: string }[];
+  last_reason_code: string | null;
+  last_detail: string | null;
+  last_rule_version: string | null;
+  last_evaluated_at: string | null;
 }
 
 export interface ProcedureItemsResponse {
   items: ProcedureItem[];
   total: number;
-  modality_stats: Record<string, { total: number; unmatched: number }>;
+  modality_stats: Record<string, {
+    total: number;
+    matched: number;
+    unmatched: number;
+    untested: number;
+  }>;
+  match_config: { clear_cache_before_run: boolean };
 }
 
 /** 单条检查项目的匹配结果（源 → 标准项对应） */
@@ -106,10 +122,14 @@ export interface ProcedureMatchResult {
   semantic_id: string;
   name_zh: string;
   modality: string;
+  effective_modality?: string;
   matched: boolean;
   tier: string;
   confidence: number;
   engine: string;
+  source?: string;
+  cache_hit?: boolean;
+  rule_version?: string;
   standards: { code: string; name: string }[];
   reason_code?: string;
   detail?: string;
@@ -231,6 +251,10 @@ export const adminAPI = {
   // 对指定检查项目批量匹配并回写 unmatched_registry（单次上限 400，前端分块）
   matchProcedures: (procedureIds: number[]): Promise<MatchProceduresResponse> =>
     apiClient.post('/admin/match-procedures', { procedure_ids: procedureIds }, { timeout: 180000 }),
+
+  // 批量评测前失效全部 L1 缓存，确保本轮使用当前规则重新计算
+  clearMatchCache: (): Promise<{ status: string; count: number }> =>
+    apiClient.post('/cache/invalidate', { modality: null }),
 };
 
 // Agent API

@@ -210,8 +210,14 @@ class MatchDispatcher:
         # 因此这里必须覆盖而不是 setdefault。
         result["source_modality"] = source_modality
         result.setdefault("effective_modality", effective_modality)
-        text_routed = effective_modality != source_modality
-        result["modality_routed"] = text_routed
+        # 如果引擎已经设置了modality_routed（如Phase 3A的DR→MG强制路由），
+        # 则使用引擎的值；否则根据dispatcher的文本路由判断
+        if "modality_routed" not in result:
+            text_routed = effective_modality != source_modality
+            result["modality_routed"] = text_routed
+        else:
+            # 引擎已设置，保留引擎的判断
+            text_routed = result.get("modality_routed", False)
 
         self._apply_result_review_policy(
             result, text, effective_modality, text_routed, source_modality

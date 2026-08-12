@@ -1,8 +1,12 @@
-"""
+"""  
 规则数据加载器 - 从 PostgreSQL 加载规则表到内存
 """
+import json
 import logging
-from typing import Dict
+import os
+import re
+import unicodedata
+from typing import Dict, List
 
 import jieba
 import pandas as pd
@@ -12,6 +16,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from .constants import VERSION_FALLBACK
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_standard_name(value: str) -> str:
+    """生成标准名称精确索引键。
+
+    只处理排版差异，不做医学同义词替换：去除标准项展示前缀 ``*``、空白，
+    统一全半角及中英文括号/逗号。索引仅在候选唯一时自动命中。
+    """
+    normalized = unicodedata.normalize("NFKC", str(value or "")).strip()
+    normalized = re.sub(r"^\*\s*", "", normalized)
+    normalized = normalized.translate(str.maketrans({
+        "（": "(", "）": ")", "，": ",", "＋": "+",
+    }))
+    return re.sub(r"\s+", "", normalized).upper()
+
 
 # B-18修复：进程全局追踪已注册到 jieba 的词条（跨 reload 实例持久化）
 _jieba_registered_words: set = set()
@@ -35,6 +54,8 @@ class RuleDataLoader:
         self.vessel_map: pd.DataFrame = pd.DataFrame()
         self.df_body_disamb: pd.DataFrame = pd.DataFrame()
         self.df_standard: Dict[str, Dict[str, pd.DataFrame]] = {}
+        self.standard_name_index: Dict[str, List[dict]] = {}
+        self.body_generalization_map: Dict = {}  # 部位泛化映射资产
 
     async def initialize(self):
         """从数据库加载所有规则表"""
@@ -43,9 +64,25 @@ class RuleDataLoader:
             await self._load_phrase_map(conn)
             await self._load_ambiguity(conn)
             await self._load_standard_table(conn)
+        
+        # 加载部位泛化映射资产
+        self._load_body_generalization_map()
 
         self._initialized = True
         logger.info("[RuleDataLoader] 规则数据加载完成")
+
+    def _load_body_generalization_map(self):
+        """加载部位泛化映射资产"""
+        assets_path = os.path.join(
+            os.path.dirname(__file__), 'assets', 'body_generalization_map.json'
+        )
+        try:
+            with open(assets_path, 'r', encoding='utf-8') as f:
+                self.body_generalization_map = json.load(f)
+            logger.info(f"[RuleDataLoader] 加载部位泛化映射: {len(self.body_generalization_map.get('generalization_rules', {}))} 条规则")
+        except FileNotFoundError:
+            logger.warning(f"[RuleDataLoader] 部位泛化映射文件不存在: {assets_path}")
+            self.body_generalization_map = {}
 
     async def _load_medical_dict(self, conn):
         """加载医学词典"""
@@ -152,39 +189,66 @@ class RuleDataLoader:
         """加载标准项目表（B-08修复：统一从 standard_check_items 加载）"""
         result = await conn.execute(text(
             "SELECT modality, body_part_l3, scan_method, post_processing, "
-            "body_part_l2, version, item_code, item_name "
+            "position_name, position_code, device_type_name, "
+            "version, item_code, item_name "
             "FROM standard_check_items WHERE is_active = true"
         ))
         rows = result.fetchall()
 
-        # 字段映射：新表 → 旧表字段名（保持引擎内部逻辑不变）
+        # 字段映射：新表 → 引擎内部兼容字段。position_name 必须保持为独立
+        # 体位维度，不能再由 body_part_l2 冒充，否则 DR 会全量查表失败。
         df_all = pd.DataFrame(rows, columns=[
             'modality', 'body_part_l3', 'scan_method', 'post_processing',
-            'body_part_l2', 'version', 'item_code', 'item_name'
+            'position_name', 'position_code', 'device_type_name',
+            'version', 'item_code', 'item_name'
         ])
 
-        # 重命名为引擎期望的字段名
         df_all.rename(columns={
             'modality': 'modality_name',
             'body_part_l3': 'three_level_name',
-            'body_part_l2': 'position_name',
             'scan_method': 'scan_name',
             'post_processing': 'post_processing_name',
             'item_code': 'checkitem_code',
             'item_name': 'checkitem_name'
         }, inplace=True)
 
-        # 补充引擎需要但新表没有的字段
+        # 旧引擎仍读取 scope_name；新表没有这一筛选维度。
         df_all['scope_name'] = ''
-        df_all['device_type_name'] = ''
 
         df_all.fillna("", inplace=True)
+
+        # L0 唯一标准名称索引：候选保留列表，重复名称绝不自动选择编码。
+        self.standard_name_index = {}
+        for row in df_all.to_dict("records"):
+            key = normalize_standard_name(row.get("checkitem_name", ""))
+            if not key:
+                continue
+            self.standard_name_index.setdefault(key, []).append({
+                "code": row.get("checkitem_code", ""),
+                "name": row.get("checkitem_name", ""),
+                "modality": str(row.get("modality_name", "")).upper(),
+                "version": row.get("version", ""),
+            })
+        for candidates in self.standard_name_index.values():
+            candidates.sort(key=lambda item: (item["modality"], item["code"]))
+        logger.info(
+            "[RuleDataLoader] 构建标准名称索引: %d 个名称，%d 个重复名称",
+            len(self.standard_name_index),
+            sum(len(candidates) > 1 for candidates in self.standard_name_index.values()),
+        )
 
         # ACR 导入数据用 "-" 表示"无值"（post_processing 947 行、scan_method 244 行），
         # 统一归一化为空串；否则 _query_ct_mr 的 scan 分支要求 post 为空串/NaN，
         # 会漏掉 post='-' 的行（如 MR颅内动脉血管成像(MRA) 无法命中）
         for col in ('three_level_name', 'position_name', 'scan_name', 'post_processing_name'):
             df_all[col] = df_all[col].replace('-', '')
+
+        # DR 的设备类型可由模态可靠推导，兼容 _query_dr 的精确分支。
+        dr_missing_device = (
+            (df_all['modality_name'] == 'DR') &
+            (df_all['device_type_name'] == '')
+        )
+        df_all.loc[dr_missing_device, 'device_type_name'] = 'DR'
 
         logger.info(f"[RuleDataLoader] 加载标准项目（从 standard_check_items）: {len(df_all)} 条")
 

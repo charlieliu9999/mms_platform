@@ -74,7 +74,10 @@ class PreprocessService:
                 .replace('上、中、下', '上中下')
                 .replace('中、下', '中下').replace('上、中', '上中')
                 .replace('中、上', '中上').replace('上、下', '上下')
-                .upper().replace('T1WI', '').replace('T2WI', ''))
+                .upper().replace('T1WI', '').replace('T2WI', '')
+                .replace('DWI', '').replace('STIR', '')
+                .replace('弥散加权成像', '').replace('扩散加权成像', '')
+                .replace('弥散', '').replace('扩散', ''))
 
         # 去除连字符（保护医学缩写 CE-MRA/CE-MRV/CE-CT 等，Step 8.5 依赖原文判断增强）
         _protected = ('CE-MRA', 'CE-MRV', 'CE-CT', 'CE-MRI')
@@ -100,6 +103,39 @@ class PreprocessService:
 
         # 部位别名归一化
         text = text.replace('鼻窦', '副鼻窦')
+
+        # === 技术描述规范化（算法资产：减少解析残留）===
+        # 多期增强+血管成像 → CTA
+        text = re.sub(r'[(（]?双?低?剂量?多期(动态)?增强[+及与]血管成像[)）]?', '(CTA)', text)
+        text = re.sub(r'[(（]?多期(动态)?增强[+及与]血管成像[)）]?', '(CTA)', text)
+        text = re.sub(r'[(（]?增强[+及与]血管成像[)）]?', '(CTA)', text)
+        text = re.sub(r'[(（]?血管成像[+及与]多期增强[)）]?', '(CTA)', text)
+        
+        # 心电门控 → 移除（技术参数，不影响匹配）
+        text = re.sub(r'心电门控(增强)?多排螺旋CT', '增强', text)
+        text = re.sub(r'[(（]?心电门控[)）]?', '', text)
+        text = re.sub(r'[(（]?前瞻性门控[)）]?', '', text)
+        text = re.sub(r'[(（]?回顾性门控[)）]?', '', text)
+        
+        # 多排螺旋CT → 移除
+        text = re.sub(r'多排螺旋CT', '', text)
+        text = re.sub(r'MSCT', '', text)
+        
+        # 重建方式规范化
+        text = re.sub(r'[(（]?多平面重组[)）]?', '(MPR)', text)
+        text = re.sub(r'[(（]?多平面重建[)）]?', '(MPR)', text)
+        text = re.sub(r'[(（]?容积再现[)）]?', '(VR)', text)
+        text = re.sub(r'[(（]?容积重建[)）]?', '(VR)', text)
+        text = re.sub(r'MPR[+及与]VR', 'MPR,VR', text)  # 联合重建拆成子项
+        
+        # 分辨率描述 → 移除
+        text = re.sub(r'[(（]?超?高分辨率?[)）]?', '', text)
+        text = re.sub(r'[(（]?UHR模式[)）]?', '', text)
+        
+        # 增强期别规范化（动静脉双期、动脉期、静脉期 → 增强）
+        text = re.sub(r'(动静脉)?双期增强', '增强', text)
+        text = re.sub(r'动脉期增强', '增强', text)
+        text = re.sub(r'静脉期增强', '增强', text)
 
         # 泛指部位清理（让引擎走"非指定部位"降级分支）
         # 这些词汇无法对应具体解剖部位，删除后保留扫描方式，匹配"无部位"标准项

@@ -3,6 +3,7 @@ Phase E: 管理 API
 
 提供词表管理、规则编辑、历史追溯等管理功能的后端接口。
 """
+import json
 import logging
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
+from ..config import get_settings
 from ..db import get_session_factory
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,7 @@ LEXICON_TABLE_META: Dict[str, Dict[str, Any]] = {
         "active_where": "is_active = true",
         "writable_cols": ["item_code", "item_name", "modality", "modality_code",
                           "body_part_l1", "body_part_l2", "body_part_l3",
+                          "position_name", "position_code", "device_type_name",
                           "scan_method", "post_processing", "version", "is_active"],
     },
 }
@@ -758,7 +761,8 @@ async def get_standard_items(
     params["limit"] = page_size
     data_sql = f"""
         SELECT id, item_code, item_name, modality, body_part_l1, body_part_l2,
-               body_part_l3, scan_method, post_processing, version
+               body_part_l3, position_name, position_code, device_type_name,
+               scan_method, post_processing, version
         FROM standard_check_items
         WHERE {where_sql}
         ORDER BY id
@@ -777,6 +781,9 @@ async def get_standard_items(
             "body_part_l1": row_dict.get("body_part_l1"),
             "body_part_l2": row_dict.get("body_part_l2"),
             "body_part_l3": row_dict.get("body_part_l3"),
+            "position_name": row_dict.get("position_name"),
+            "position_code": row_dict.get("position_code"),
+            "device_type_name": row_dict.get("device_type_name"),
             "scan_method": row_dict.get("scan_method"),
             "post_processing": row_dict.get("post_processing"),
             "version": row_dict.get("version"),
@@ -1035,9 +1042,12 @@ async def get_unmatched_list(
         SELECT
             u.id, u.procedure_id, u.modality, u.reason_code, u.detail, u.status,
             u.handled_at, u.created_at, u.updated_at,
-            p.name_zh as procedure_name, p.semantic_id
+            p.name_zh as procedure_name, p.semantic_id,
+            pmr.effective_modality, pmr.tier,
+            pmr.standards_json AS candidate_standards
         FROM unmatched_registry u
         LEFT JOIN procedure_dictionary p ON u.procedure_id = p.id
+        LEFT JOIN procedure_match_results pmr ON u.procedure_id = pmr.procedure_id
         WHERE {where_sql}
         ORDER BY u.created_at DESC
         LIMIT :limit OFFSET :offset
@@ -1112,9 +1122,20 @@ async def list_procedure_items(
     items_sql = text(f"""
         SELECT pd.id, pd.semantic_id, pd.name_zh,
                UPPER(pd.modality) AS modality,
-               ur.status AS um_status, ur.reason_code AS um_reason
+               ur.status AS um_status, ur.reason_code AS um_reason,
+               pmr.matched AS last_matched,
+               pmr.tier AS last_tier,
+               pmr.confidence AS last_confidence,
+               pmr.source AS last_source,
+               pmr.effective_modality AS last_effective_modality,
+               pmr.standards_json AS last_standards,
+               pmr.reason_code AS last_reason_code,
+               pmr.detail AS last_detail,
+               pmr.rule_version AS last_rule_version,
+               pmr.evaluated_at AS last_evaluated_at
         FROM procedure_dictionary pd
         LEFT JOIN unmatched_registry ur ON ur.procedure_id = pd.id
+        LEFT JOIN procedure_match_results pmr ON pmr.procedure_id = pd.id
         WHERE {where_sql}
         ORDER BY pd.modality, pd.id
         LIMIT :limit
@@ -1130,6 +1151,16 @@ async def list_procedure_items(
             "modality": r["modality"] or "UNKNOWN",
             "um_status": r["um_status"],
             "um_reason": r["um_reason"],
+            "last_matched": r["last_matched"],
+            "last_tier": r["last_tier"],
+            "last_confidence": r["last_confidence"],
+            "last_source": r["last_source"],
+            "last_effective_modality": r["last_effective_modality"],
+            "last_standards": r["last_standards"] or [],
+            "last_reason_code": r["last_reason_code"],
+            "last_detail": r["last_detail"],
+            "last_rule_version": r["last_rule_version"],
+            "last_evaluated_at": r["last_evaluated_at"],
         }
         for r in rows
     ]
@@ -1143,20 +1174,35 @@ async def list_procedure_items(
     stats_sql = text(f"""
         SELECT UPPER(pd.modality) AS modality,
                COUNT(*) AS total,
-               COUNT(ur.id) FILTER (WHERE ur.status = 'open') AS unmatched
+               COUNT(*) FILTER (WHERE pmr.matched = true) AS matched,
+               COUNT(*) FILTER (WHERE pmr.matched = false) AS unmatched,
+               COUNT(*) FILTER (WHERE pmr.procedure_id IS NULL) AS untested
         FROM procedure_dictionary pd
-        LEFT JOIN unmatched_registry ur ON ur.procedure_id = pd.id
+        LEFT JOIN procedure_match_results pmr ON pmr.procedure_id = pd.id
         WHERE {' AND '.join(stats_where)}
         GROUP BY UPPER(pd.modality)
         ORDER BY total DESC
     """)
     stats_rows = (await session.execute(stats_sql, stats_params)).mappings().all()
     modality_stats = {
-        (r["modality"] or "UNKNOWN"): {"total": r["total"], "unmatched": r["unmatched"]}
+        (r["modality"] or "UNKNOWN"): {
+            "total": r["total"],
+            "matched": r["matched"],
+            "unmatched": r["unmatched"],
+            "untested": r["untested"],
+        }
         for r in stats_rows
     }
 
-    return {"items": items, "total": len(items), "modality_stats": modality_stats}
+    settings = get_settings()
+    return {
+        "items": items,
+        "total": len(items),
+        "modality_stats": modality_stats,
+        "match_config": {
+            "clear_cache_before_run": settings.PROCEDURE_MATCH_CLEAR_CACHE_BEFORE_RUN,
+        },
+    }
 
 
 class MatchProceduresRequest(BaseModel):
@@ -1167,8 +1213,11 @@ class MatchProceduresRequest(BaseModel):
 def _classify_unmatched(result: Dict[str, Any]) -> "tuple[str, str]":
     """根据引擎匹配结果归因 reason_code（对齐 unmatched_registry 既有语义）。
 
-    依据引擎返回的 has_entity 信号：
-    - has_entity=None  → unmatchable 标记命中 / 不支持模态 → unmatchable_by_design
+    依据引擎返回的 reason/has_entity 信号：
+    - tier=ambiguous → parser_ambiguity / modality_route_review / standard_data_conflict
+    - reason=excluded_* → 关键词引擎结构化排除原因
+    - reason=unsupported_modality → unsupported_modality
+    - has_entity=None 且命中旧排除标记 → unmatchable_by_design
     - has_entity=True  → 解析出医学实体但标准库无对应 → standard_lib_gap
     - has_entity=False → 未解析出医学实体（词库未覆盖）→ lexicon_gap
     """
@@ -1177,9 +1226,28 @@ def _classify_unmatched(result: Dict[str, Any]) -> "tuple[str, str]":
     if tier == "error":
         return "engine_error", result.get("reason") or "引擎异常"
     if tier == "ambiguous":
-        return "standard_lib_gap", "多候选歧义，标准库存在多个候选"
+        ambiguous_reason = result.get("reason") or ""
+        if ambiguous_reason == "exact_name_collision":
+            return "standard_data_conflict", "标准名称对应多个有效编码或模态，禁止自动选择"
+        if ambiguous_reason == "routed_result_requires_review":
+            return "modality_route_review", "跨模态路由结果置信度不足，需人工确认"
+        if ambiguous_reason == "compound_item_incomplete":
+            return "parser_ambiguity", "联合检查仅部分子项命中，不能整条自动确认"
+        return "parser_ambiguity", "多候选或解析残留，需人工确认"
+    reason = result.get("reason") or ""
+    if reason == "unsupported_modality":
+        return "unsupported_modality", "当前匹配引擎未支持该模态"
+    if reason == "excluded_intervention":
+        return "excluded_intervention", "治疗性介入项目不自动匹配诊断影像标准"
+    if reason == "excluded_non_imaging":
+        return "excluded_non_imaging", "非影像或内镜类项目不在自动匹配范围"
+    if reason == "standard_lib_gap":
+        return "standard_lib_gap", "已识别医学实体，但标准库无对应项"
+    if reason == "lexicon_gap":
+        return "lexicon_gap", "未解析出医学实体（词库未覆盖）"
+    if reason == "engine_not_ready":
+        return "engine_error", "关键词引擎未就绪"
     if has_entity is None:
-        reason = result.get("reason") or ""
         return "unmatchable_by_design", (f"unmatchable:{reason}" if reason else "tier=none")
     if has_entity:
         return "standard_lib_gap", "解析出医学实体，标准库无对应项"
@@ -1233,6 +1301,7 @@ async def match_procedures(
 
     results: List[Dict[str, Any]] = []
     registry_ops: List[Dict[str, Any]] = []
+    persisted_results: List[Dict[str, Any]] = []
     matched_count = 0
     by_modality: Dict[str, Dict[str, int]] = {}
 
@@ -1246,6 +1315,17 @@ async def match_procedures(
         tier = result.get("tier", "none")
         standards = _extract_standards(result)
         matched = result.get("num_standard", 0) > 0 and tier in ("exact", "partial", "degraded")
+        cache_hit = bool(result.get("_cache_hit"))
+        source = (
+            result.get("_cache_source") if cache_hit else "algorithm"
+        ) or "algorithm"
+        effective_modality = (
+            result.get("effective_modality")
+            or dispatcher._normalize_modality(mod_raw)
+            or mod_upper
+        )
+        reason_code: Optional[str] = None
+        detail: Optional[str] = None
 
         slot = by_modality.setdefault(mod_upper, {"total": 0, "matched": 0, "unmatched": 0})
         slot["total"] += 1
@@ -1255,10 +1335,14 @@ async def match_procedures(
             "semantic_id": r["semantic_id"],
             "name_zh": name,
             "modality": mod_upper,
+            "effective_modality": effective_modality,
             "matched": matched,
             "tier": tier,
             "confidence": result.get("confidence", 0.0),
             "engine": result.get("engine"),
+            "source": source,
+            "cache_hit": cache_hit,
+            "rule_version": holder.rule_version,
             "standards": standards,
         }
 
@@ -1268,14 +1352,26 @@ async def match_procedures(
             registry_ops.append({"pid": pid, "action": "resolve"})
         else:
             slot["unmatched"] += 1
-            reason, detail = _classify_unmatched(result)
-            entry["reason_code"] = reason
+            reason_code, detail = _classify_unmatched(result)
+            entry["reason_code"] = reason_code
             entry["detail"] = detail
             registry_ops.append({
                 "pid": pid, "action": "upsert", "modality": mod_upper,
-                "reason": reason, "detail": detail,
+                "reason": reason_code, "detail": detail,
             })
         results.append(entry)
+        persisted_results.append({
+            "pid": pid,
+            "matched": matched,
+            "tier": tier,
+            "confidence": float(result.get("confidence", 0.0) or 0.0),
+            "source": source,
+            "effective_modality": effective_modality,
+            "standards_json": json.dumps(standards, ensure_ascii=False),
+            "reason_code": reason_code,
+            "detail": detail,
+            "rule_version": holder.rule_version,
+        })
 
     # 回写 unmatched_registry（procedure_id 唯一索引，安全 upsert）
     for op in registry_ops:
@@ -1298,6 +1394,31 @@ async def match_procedures(
                 SET status = 'resolved', handled_at = NOW(), updated_at = NOW()
                 WHERE procedure_id = :pid AND status = 'open'
             """), {"pid": op["pid"]})
+
+    # 持久化每个项目的最近一次完整结果，使页面刷新后仍能正确展示
+    # matched/tier/标准项，而不再把无 unmatched_registry 行误判为“未检测”。
+    if persisted_results:
+        await session.execute(text("""
+            INSERT INTO procedure_match_results
+                (procedure_id, matched, tier, confidence, source,
+                 effective_modality, standards_json,
+                 reason_code, detail, rule_version, evaluated_at)
+            VALUES
+                (:pid, :matched, :tier, :confidence, :source,
+                 :effective_modality, CAST(:standards_json AS jsonb), :reason_code, :detail,
+                 :rule_version, NOW())
+            ON CONFLICT (procedure_id) DO UPDATE SET
+                matched = EXCLUDED.matched,
+                tier = EXCLUDED.tier,
+                confidence = EXCLUDED.confidence,
+                source = EXCLUDED.source,
+                effective_modality = EXCLUDED.effective_modality,
+                standards_json = EXCLUDED.standards_json,
+                reason_code = EXCLUDED.reason_code,
+                detail = EXCLUDED.detail,
+                rule_version = EXCLUDED.rule_version,
+                evaluated_at = NOW()
+        """), persisted_results)
     await session.commit()
 
     return {

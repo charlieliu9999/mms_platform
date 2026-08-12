@@ -23,6 +23,7 @@ from .api.legacy import legacy_router
 from .api.routes import router
 from .api.admin import router as admin_router
 from .api.evaluation import router as evaluation_router
+from .api.open_portal import router as open_portal_router
 from .config import get_settings
 from .core.engine_holder import get_engine_holder
 from .db import get_engine
@@ -76,6 +77,8 @@ app.include_router(legacy_router)
 app.include_router(admin_router)
 # 评测系统 API（Phase F）- evaluation_router 已包含 /api/evaluation prefix
 app.include_router(evaluation_router)
+# 开放门户 API（官网数据接口）- open_portal_router 已包含 /api/open prefix
+app.include_router(open_portal_router, prefix="/api")
 
 # 挂载前端静态文件（生产部署时使用）
 frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"

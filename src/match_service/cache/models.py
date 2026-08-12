@@ -23,6 +23,7 @@ class MatchCache(Base):
     result_json = Column(Text, nullable=False)
     confidence = Column(Float, nullable=False, default=1.0)
     source = Column(String(30), nullable=False, default="algorithm")
+    rule_version = Column(String(80), nullable=True, index=True)
     hit_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, server_default=func.now())
     confirmed_at = Column(DateTime, nullable=True)

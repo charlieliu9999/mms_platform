@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Card, Input, Select, Button, Tag, Progress, Table, Tabs, message,
-  Spin, Empty, Segmented, Tooltip, Row, Col,
+  Spin, Empty, Segmented, Tooltip, Row, Col, Switch,
 } from 'antd';
 import {
   SearchOutlined, CheckCircleFilled, ExclamationCircleOutlined, ThunderboltOutlined,
@@ -25,6 +25,12 @@ const REASON_META: Record<string, { label: string; color: string }> = {
   lexicon_gap: { label: '词库映射缺失', color: 'blue' },
   needs_manual: { label: '需人工审核', color: 'purple' },
   engine_error: { label: '引擎异常', color: 'red' },
+  unsupported_modality: { label: '暂不支持的模态', color: 'cyan' },
+  parser_ambiguity: { label: '解析歧义', color: 'purple' },
+  modality_route_review: { label: '模态路由待确认', color: 'geekblue' },
+  standard_data_conflict: { label: '标准数据冲突', color: 'volcano' },
+  excluded_intervention: { label: '治疗性介入排除', color: 'magenta' },
+  excluded_non_imaging: { label: '非影像项目排除', color: 'default' },
 };
 
 type ItemStatus = 'matched' | 'unmatched' | 'wontfix' | 'unknown';
@@ -189,8 +195,11 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
   const [activeTab, setActiveTab] = useState<string>(initialTab);
 
   const [items, setItems] = useState<ProcedureItem[]>([]);
-  const [modalityStats, setModalityStats] = useState<Record<string, { total: number; unmatched: number }>>({});
+  const [modalityStats, setModalityStats] = useState<Record<string, {
+    total: number; matched: number; unmatched: number; untested: number;
+  }>>({});
   const [itemsLoading, setItemsLoading] = useState(false);
+  const [clearCacheBeforeRun, setClearCacheBeforeRun] = useState(true);
 
   const [modalityFilter, setModalityFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<'all' | ItemStatus>('all');
@@ -212,6 +221,7 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
       const res = await adminAPI.getProcedureItems();
       setItems(res.items || []);
       setModalityStats(res.modality_stats || {});
+      setClearCacheBeforeRun(res.match_config?.clear_cache_before_run ?? true);
     } catch {
       message.error('加载检查项目失败');
     } finally {
@@ -224,6 +234,8 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
   const getStatus = useCallback((item: ProcedureItem): ItemStatus => {
     const r = matchResults[item.id];
     if (r) return r.matched ? 'matched' : 'unmatched';
+    if (item.last_matched === true) return 'matched';
+    if (item.last_matched === false) return 'unmatched';
     if (item.um_status === 'open') return 'unmatched';
     if (item.um_status === 'resolved') return 'matched';
     if (item.um_status === 'wontfix') return 'wontfix';
@@ -271,6 +283,10 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
     setBatchProgress({ done: 0, total: ids.length });
     let matched = 0, unmatched = 0;
     try {
+      if (clearCacheBeforeRun) {
+        const cleared = await adminAPI.clearMatchCache();
+        message.info(`已失效 ${cleared.count ?? 0} 条 L1 缓存，本轮使用当前规则重新计算`);
+      }
       for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
         const chunk = ids.slice(i, i + CHUNK_SIZE);
         const res = await adminAPI.matchProcedures(chunk);
@@ -282,6 +298,7 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
         setBatchProgress({ done: Math.min(i + CHUNK_SIZE, ids.length), total: ids.length });
       }
       message.success(`匹配完成：命中 ${matched} 项，未匹配 ${unmatched} 项`);
+      await loadItems();
       setWbKey((k) => k + 1);
     } catch {
       message.error('批量匹配中断，已保留已完成部分');
@@ -311,8 +328,18 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
       ),
     },
     {
-      title: '模态', dataIndex: 'modality', key: 'modality', width: 90,
-      render: (m: string) => <Tag className="m-0">{m}</Tag>,
+      title: '模态', dataIndex: 'modality', key: 'modality', width: 120,
+      render: (m: string, r: ProcedureItem) => {
+        const effective = matchResults[r.id]?.effective_modality || r.last_effective_modality;
+        return (
+          <div className="inline-flex items-center gap-1">
+            <Tag className="m-0">{m}</Tag>
+            {effective && effective !== m && (
+              <span className="text-[11px] font-semibold text-brand-color">→ {effective}</span>
+            )}
+          </div>
+        );
+      },
     },
     {
       title: '状态', key: 'status', width: 90,
@@ -325,39 +352,43 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
       title: 'Tier', key: 'tier', width: 90,
       render: (_: any, r: ProcedureItem) => {
         const res = matchResults[r.id];
-        if (!res) return <span className="text-text-secondary">—</span>;
-        return <Tag color={TIER_COLORS[res.tier] || 'default'} className="m-0">{res.tier}</Tag>;
+        const tier = res?.tier || r.last_tier;
+        if (!tier) return <span className="text-text-secondary">—</span>;
+        return <Tag color={TIER_COLORS[tier] || 'default'} className="m-0">{tier}</Tag>;
       },
     },
     {
       title: '匹配标准项（源 → 标准对应）', key: 'standards',
       render: (_: any, r: ProcedureItem) => {
         const res = matchResults[r.id];
-        if (!res) {
-          return r.um_status === 'open' && r.um_reason
-            ? <span className="text-xs text-text-secondary">{REASON_META[r.um_reason]?.label || r.um_reason}</span>
-            : <span className="text-text-secondary">—</span>;
+        const matched = res?.matched ?? r.last_matched;
+        const standards = res?.standards || r.last_standards || [];
+        const detail = res?.detail || r.last_detail;
+        if (matched === true && standards.length > 0) {
+          return (
+            <div className="space-y-0.5">
+              {standards.map((s, i) => (
+                <div key={i} className="text-xs">
+                  <span className="font-mono text-brand-color">{s.code}</span>
+                  <span className="ml-1.5 text-text-primary">{s.name}</span>
+                </div>
+              ))}
+            </div>
+          );
         }
-        if (!res.matched || !res.standards?.length) {
-          return <span className="text-xs text-text-secondary">{res.detail || '未命中'}</span>;
+        if (matched === false) {
+          return <span className="text-xs text-text-secondary">{detail || '未命中'}</span>;
         }
-        return (
-          <div className="space-y-0.5">
-            {res.standards.map((s, i) => (
-              <div key={i} className="text-xs">
-                <span className="font-mono text-brand-color">{s.code}</span>
-                <span className="ml-1.5 text-text-primary">{s.name}</span>
-              </div>
-            ))}
-          </div>
-        );
+        return r.um_status === 'open' && r.um_reason
+          ? <span className="text-xs text-text-secondary">{REASON_META[r.um_reason]?.label || r.um_reason}</span>
+          : <span className="text-text-secondary">—</span>;
       },
     },
     {
       title: '归因', key: 'reason', width: 130,
       render: (_: any, r: ProcedureItem) => {
         const res = matchResults[r.id];
-        const reason = res?.reason_code || (getStatus(r) === 'unmatched' ? r.um_reason : null);
+        const reason = res?.reason_code || r.last_reason_code || (getStatus(r) === 'unmatched' ? r.um_reason : null);
         if (!reason) return <span className="text-text-secondary">—</span>;
         const meta = REASON_META[reason] || { label: reason, color: 'default' };
         return <Tag color={meta.color} className="m-0">{meta.label}</Tag>;
@@ -437,6 +468,19 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
             <Button icon={<ReloadOutlined />} onClick={loadItems} disabled={batchRunning}>刷新</Button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Tooltip title="开启后，批量匹配开始前先失效全部 L1 缓存，确保结果来自当前规则版本；会增加本轮运行时间。">
+              <div className="inline-flex items-center gap-2 px-3 h-8 rounded-lg border bg-bg-subtle border-border-theme">
+                <DatabaseOutlined className="text-brand-color" />
+                <span className="text-xs font-semibold text-text-primary">运行前清缓存</span>
+                <Switch
+                  size="small"
+                  checked={clearCacheBeforeRun}
+                  onChange={setClearCacheBeforeRun}
+                  disabled={batchRunning}
+                  aria-label="批量匹配运行前清除缓存"
+                />
+              </div>
+            </Tooltip>
             <Button
               type="primary"
               icon={<PlayCircleOutlined />}

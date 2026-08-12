@@ -57,8 +57,16 @@ async def batch_match(req: BatchRequest, session: AsyncSession = Depends(_get_se
 @router.post("/cache/store")
 async def cache_store(req: CacheStoreRequest, session: AsyncSession = Depends(_get_session)):
     cache = CacheService(session)
-    await cache.store(req.text, req.modality, req.result, req.confidence, req.source)
-    return {"status": "stored"}
+    holder = get_engine_holder()
+    await cache.store(
+        req.text,
+        req.modality,
+        req.result,
+        req.confidence,
+        req.source,
+        holder.rule_version,
+    )
+    return {"status": "stored", "rule_version": holder.rule_version}
 
 
 @router.post("/cache/invalidate")
@@ -115,15 +123,23 @@ async def submit_feedback(item: FeedbackItem, session: AsyncSession = Depends(_g
 
     if item.correct_result:
         cache = CacheService(session)
-        await cache.store(item.text, item.modality, item.correct_result, 1.0, "manual")
+        holder = get_engine_holder()
+        await cache.store(
+            item.text,
+            item.modality,
+            item.correct_result,
+            1.0,
+            "manual",
+            holder.rule_version,
+        )
 
     await session.commit()
     return {"status": "recorded"}
 
 
 @router.post("/reload")
-async def reload_rules():
-    """热重载规则（B-06：联动清空 Redis 匹配缓存，避免旧规则结果残留）"""
+async def reload_rules(session: AsyncSession = Depends(_get_session)):
+    """热重载规则并失效 PostgreSQL L1 缓存，避免旧规则结果残留。"""
     holder = get_engine_holder()
     try:
         version = await holder.reload()
@@ -131,10 +147,9 @@ async def reload_rules():
         logger.error(f"[match-service] reload 失败: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"reload 失败: {e}")
 
-    cache_cleared = False
+    cache_cleared = 0
     try:
-        from ..cache.service import get_cache_service
-        cache_cleared = await get_cache_service().invalidate_all()
+        cache_cleared = await CacheService(session).invalidate_all()
     except Exception as e:
         logger.warning(f"[match-service] reload 后缓存清空失败（不影响重载）: {e}")
 

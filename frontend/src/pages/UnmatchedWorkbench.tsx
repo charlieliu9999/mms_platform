@@ -8,6 +8,12 @@ const REASON_META: Record<string, { label: string; color: string }> = {
   unmatchable_by_design: { label: '设计上不可匹配', color: 'default' },
   standard_lib_gap: { label: '标准库缺失', color: 'orange' },
   lexicon_gap: { label: '词库映射缺失', color: 'blue' },
+  unsupported_modality: { label: '暂不支持的模态', color: 'cyan' },
+  parser_ambiguity: { label: '解析歧义', color: 'purple' },
+  modality_route_review: { label: '模态路由待确认', color: 'geekblue' },
+  standard_data_conflict: { label: '标准数据冲突', color: 'volcano' },
+  excluded_intervention: { label: '治疗性介入排除', color: 'magenta' },
+  excluded_non_imaging: { label: '非影像项目排除', color: 'default' },
   needs_manual: { label: '需人工审核', color: 'purple' },
   engine_error: { label: '引擎异常', color: 'red' },
 };
@@ -83,7 +89,31 @@ export default function UnmatchedWorkbench() {
       title: '检查模态',
       dataIndex: 'modality',
       key: 'modality',
-      render: (mod: string) => <Tag color="blue" className="font-bold m-0">{mod || '通用'}</Tag>,
+      render: (mod: string, record: any) => (
+        <div className="flex items-center gap-1 whitespace-nowrap">
+          <Tag color="blue" className="font-bold m-0">{mod || '通用'}</Tag>
+          {record.effective_modality && record.effective_modality !== mod && (
+            <span className="text-xs text-text-secondary">→ {record.effective_modality}</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      title: '候选标准项',
+      dataIndex: 'candidate_standards',
+      key: 'candidate_standards',
+      render: (standards: Array<{ code?: string; name?: string }> | null) => (
+        standards?.length ? (
+          <div className="space-y-1 min-w-64">
+            {standards.map((item, index) => (
+              <div key={`${item.code || 'candidate'}-${index}`} className="text-xs">
+                <span className="font-mono text-text-secondary mr-1">{item.code || '-'}</span>
+                <span className="text-text-primary">{item.name || '-'}</span>
+              </div>
+            ))}
+          </div>
+        ) : <span className="text-text-secondary">—</span>
+      ),
     },
     {
       title: '诊断分类原因',
@@ -174,6 +204,12 @@ export default function UnmatchedWorkbench() {
               <Select.Option value="lexicon_gap">词库映射缺失</Select.Option>
               <Select.Option value="standard_lib_gap">标准库缺失</Select.Option>
               <Select.Option value="unmatchable_by_design">设计上不可匹配</Select.Option>
+              <Select.Option value="unsupported_modality">暂不支持的模态</Select.Option>
+              <Select.Option value="parser_ambiguity">解析歧义</Select.Option>
+              <Select.Option value="modality_route_review">模态路由待确认</Select.Option>
+              <Select.Option value="standard_data_conflict">标准数据冲突</Select.Option>
+              <Select.Option value="excluded_intervention">治疗性介入排除</Select.Option>
+              <Select.Option value="excluded_non_imaging">非影像项目排除</Select.Option>
               <Select.Option value="needs_manual">需人工审核</Select.Option>
               <Select.Option value="engine_error">引擎异常</Select.Option>
             </Select>

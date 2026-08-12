@@ -34,15 +34,16 @@ class TestPipelineFlow:
         """Step 1: 预处理应规范化文本"""
         service = v2_orchestrator.preprocess_service
 
-        # 全角 → 半角
-        assert service.preprocess("ＣＴ头部", "CT", "V3.8.2") == "CT头部"
+        # preprocess 同时返回处理文本和方括号审计处理器。
+        result, _ = service.preprocess("ＣＴ头部", "CT", "V3.8.2")
+        assert result == "CT头部"
 
         # 脊椎补全
-        result = service.preprocess("腰椎L3-L5", "CT", "V3.8.2")
+        result, _ = service.preprocess("腰椎L3-L5", "CT", "V3.8.2")
         assert "腰椎L3" in result
 
         # 中文标点 → 英文标点
-        result = service.preprocess("CT头部（平扫）", "CT", "V3.8.2")
+        result, _ = service.preprocess("CT头部（平扫）", "CT", "V3.8.2")
         assert "(" in result and "（" not in result
 
     def test_step2_split_record(self, v2_orchestrator):
@@ -180,6 +181,16 @@ class TestPipelineFlow:
 class TestPipelineIntegration:
     """测试完整 Pipeline 集成"""
 
+    def test_orchestrators_do_not_share_stale_keyword_snapshot(
+        self, event_loop, v2_orchestrator
+    ):
+        """热重载构建的新协调器必须重新读取 keyword_match_rules。"""
+        from match_service.engine.match_engine_v2 import MatchEngineOrchestrator
+
+        reloaded = MatchEngineOrchestrator(async_engine)
+        event_loop.run_until_complete(reloaded.initialize())
+        assert reloaded._kw_matcher is not v2_orchestrator._kw_matcher
+
     def test_full_pipeline_ct(self, v2_orchestrator):
         """完整 Pipeline - CT 场景"""
         result = v2_orchestrator.match("CT头部平扫+增强", "CT", "V3.8.2")
@@ -205,6 +216,130 @@ class TestPipelineIntegration:
         # 应处理两个模态
         assert result['num_standard'] >= 2
         assert len(result['data']) >= 2
+
+    def test_unique_standard_name_precedes_unsupported_and_exclusion_guards(
+        self, v2_orchestrator
+    ):
+        """错桶及介入词不能拦截标准库中唯一、完全同名的有效项目。"""
+        other = v2_orchestrator.match("甲状腺弹性超声检查", "OTHER")
+        assert other["tier"] == "exact"
+        assert other["engine"] == "standard_name_exact"
+        assert other["effective_modality"] == "US"
+        assert other["data"][0]["standard"][0]["code"] == "50U101000C1000"
+
+        intervention = v2_orchestrator.match("甲状旁腺介入超声检查", "IR")
+        assert intervention["tier"] == "exact"
+        assert intervention["data"][0]["standard"][0]["code"] == "50U102000C5000"
+
+        # 标准库和来源模态一致时，名称中的历史错误前缀不能覆盖权威模态。
+        oct_result = v2_orchestrator.match(
+            "MR眼前节光学相干断层扫描(AS-OCT)", "OCT"
+        )
+        assert oct_result["tier"] == "exact"
+        assert oct_result["data"][0]["standard"][0]["code"] == "120990000110000"
+
+    def test_exact_name_collision_is_explicitly_ambiguous(self, v2_orchestrator):
+        """同名多编码不得由旧引擎静默选择其中一个。"""
+        result = v2_orchestrator.match(
+            "SPECT放射性核素大动脉显像", "SPECT"
+        )
+        assert result["tier"] == "ambiguous"
+        assert result["reason"] == "exact_name_collision"
+        assert result["engine"] == "standard_name_exact_collision"
+        assert {item["code"] for item in result["data"][0]["standard"]} == {
+            "C010A802B0000", "50100000110000"
+        }
+
+    @pytest.mark.parametrize(
+        ("text", "modality", "reason", "has_entity"),
+        [
+            ("US支气管镜引导经支气管针吸活检术", "US", "excluded_non_imaging", None),
+            ("DSA机械性血栓切除术", "DSA", "excluded_intervention", None),
+            ("DSA髂静脉手术", "DSA", "excluded_intervention", None),
+            ("SPECT膀胱显像", "SPECT", "standard_lib_gap", True),
+            ("US完全未知部位超声检查", "US", "lexicon_gap", False),
+        ],
+    )
+    def test_keyword_engine_returns_structured_failure_reason(
+        self, v2_orchestrator, text, modality, reason, has_entity
+    ):
+        result = v2_orchestrator.match(text, modality)
+        assert result["tier"] == "none"
+        assert result["reason"] == reason
+        assert result["has_entity"] is has_entity
+
+    @pytest.mark.parametrize(
+        ("text", "expected_code"),
+        [
+            ("US肝胆胰常规超声检查", "50U301000C0000"),
+            ("US胃部(口服超声造影)", "50U309003C4000"),
+            ("US手术区域皮肤(高频超声+多普勒)", "50U201000C0000"),
+        ],
+    )
+    def test_keyword_high_confidence_aliases(self, v2_orchestrator, text, expected_code):
+        result = v2_orchestrator.match(text, "US")
+        codes = {
+            item["code"]
+            for block in result.get("data", [])
+            for item in block.get("standard", [])
+        }
+        assert expected_code in codes
+
+    def test_keyword_multi_candidate_is_not_exact(self, v2_orchestrator):
+        result = v2_orchestrator.match("超声心动", "US")
+        assert result["num_standard"] > 0
+        assert result["tier"] == "degraded"
+
+    def test_exact_name_rejects_text_standard_modality_conflict(self, v2_orchestrator):
+        """PET/MRI 文本不得自动命中错误标为 PET/CT 的同名脏数据。"""
+        result = v2_orchestrator.match(
+            "PET/MRI大血管(代谢显像+平扫+增强)", "PET/MR"
+        )
+        codes = {
+            standard["code"]
+            for block in result.get("data", [])
+            for standard in block.get("standard", [])
+        }
+        assert "100990000130000" not in codes
+
+    @pytest.mark.parametrize(
+        ("text", "expected_code"),
+        [
+            ("MR肝脏普通扫描", "30050101110000"),
+            ("MR垂体普通扫描", "30010301110000"),
+        ],
+    )
+    def test_mr_v382_body_normalization_matches_current_standard_library(
+        self, v2_orchestrator, text, expected_code
+    ):
+        """肝脏/垂体不能再被反向归一化为旧标准表名称。"""
+        result = v2_orchestrator.match(text, "MR", "V3.8.2")
+        codes = {
+            standard["code"]
+            for block in result["data"]
+            for standard in block["standard"]
+        }
+        assert expected_code in codes
+
+    def test_vascular_normalization_is_independent_of_scan_order(self, v2_orchestrator):
+        """MRA+CE-MRA 的语义不能受 set/list 或 PYTHONHASHSEED 顺序影响。"""
+        from match_service.engine.match_engine_v2.match_node import MatchNode
+
+        def normalize(scan_order):
+            node = MatchNode(
+                "MR腹部动脉血管平扫+增强成像(MRA+CE-MRA)", "MR", "V3.8.2"
+            )
+            node.add_entity("腹部动脉", "body", "腹主动脉")
+            for scan in scan_order:
+                node.add_entity(scan, "scan", scan)
+            result = v2_orchestrator.disamb_service.normalize_vascular_nodes(
+                [node], "scan", "MR"
+            )[0]
+            return sorted(result.std_names[i] for i in result.pos_dict["scan"])
+
+        expected = ["动脉血管增强成像(CE-MRA)", "动脉血管成像(MRA)"]
+        assert normalize(["平扫+增强", "动脉血管成像(MRA)"]) == expected
+        assert normalize(["动脉血管成像(MRA)", "平扫+增强"]) == expected
 
 
 if __name__ == "__main__":

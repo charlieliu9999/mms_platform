@@ -128,6 +128,8 @@ class LLMSemanticMatcher:
             await self.initialize()
 
         cache_service = CacheService(self.session)
+        from ..core.engine_holder import get_engine_holder
+        rule_version = get_engine_holder().rule_version
         matched = 0
         cached = 0
         failed = 0
@@ -140,7 +142,12 @@ class LLMSemanticMatcher:
             result = await self.match_one(text_val, modality)
             if result and result["confidence"] >= auto_cache_threshold:
                 await cache_service.store(
-                    text_val, modality, result, result["confidence"], "llm_semantic"
+                    text_val,
+                    modality,
+                    result,
+                    result["confidence"],
+                    "llm_semantic",
+                    rule_version,
                 )
                 cached += 1
                 matched += 1

@@ -434,8 +434,11 @@ class USSpectPetMatcher:
         self._oct_unmatchable: Tuple[str, ...] = tuple()    # H1: OCT 排除词
         self._dsa_body_keywords: List[Tuple[List[str], str]] = []
         self._dsa_unmatchable: Tuple[str, ...] = tuple()
-        # C4: 最近一次匹配的置信层级（exact/degraded），供 orchestrator 读取
+        # 最近一次匹配的结构化诊断，供 orchestrator 包装统一结果。
+        # 保留 match() 的 List[Tuple] 返回值，兼容旧调用方。
         self._last_tier: str = 'exact'
+        self._last_reason: str = ''
+        self._last_has_entity: Optional[bool] = False
 
     async def initialize(self):
         # Phase A: 独立化后 engine 必须外部注入
@@ -548,40 +551,59 @@ class USSpectPetMatcher:
         return self._initialized
 
     def match(self, order_name: str, modality: str) -> List[Tuple[str, str]]:
+        """匹配单条医嘱，并通过 ``_last_*`` 暴露结构化诊断。
+
+        返回值仍为 ``[(item_code, item_name), ...]``，避免破坏旧版和批量接口。
         """
-        匹配单条医嘱。
-
-        Returns:
-            [(item_code, item_name), ...] 匹配到的标准项列表
-
-        Note:
-            匹配后通过 self._last_tier 获取置信层级（'exact' 或 'degraded'），
-            orchestrator 的 _kw_match 据此设置正确的 confidence。
-        """
-        if not self._initialized:
-            return []
-
-        # 每次匹配前重置 tier
         self._last_tier = 'exact'
+        self._last_reason = ''
+        self._last_has_entity = False
+
+        if not self._initialized:
+            return self._failure('engine_not_ready')
 
         if modality == 'US':
-            return self._match_us(order_name)
+            result = self._match_us(order_name)
         elif modality == 'SPECT':
-            return self._match_spect(order_name)
+            result = self._match_spect(order_name)
         elif modality in ('PET/CT', 'PET/MR'):
-            return self._match_pet(order_name, modality)
+            result = self._match_pet(order_name, modality)
         elif modality == 'OCT':
-            return self._match_oct(order_name)
+            result = self._match_oct(order_name)
         elif modality == 'DSA':
-            return self._match_dsa(order_name)
+            result = self._match_dsa(order_name)
+        else:
+            return self._failure('unsupported_modality')
+
+        if result:
+            self._last_reason = ''
+            self._last_has_entity = True
+        elif not self._last_reason:
+            self._last_reason = 'lexicon_gap'
+        return result
+
+    def _failure(self, reason: str,
+                 has_entity: Optional[bool] = None) -> List[Tuple[str, str]]:
+        """记录无结果原因，同时保持旧 List 返回协议。"""
+        self._last_reason = reason
+        self._last_has_entity = has_entity
         return []
+
+    def _query_result(self, pairs: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        """标记已识别医学实体后的标准库查询结果。"""
+        self._last_has_entity = True
+        if not pairs:
+            self._last_reason = 'standard_lib_gap'
+        return pairs
 
     # ─── US 匹配 ──────────────────────────────────────────────────────────────
 
     def _match_us(self, order_name: str) -> List[Tuple[str, str]]:
-        # 排除特殊用途
+        # 排除特殊用途。支气管镜等属于非影像自动匹配范围，而不是词库缺失。
         if any(marker in order_name for marker in self._us_unmatchable):
-            return []
+            return self._failure('excluded_non_imaging')
+        if re.search(r'动态心电|无影像学|仅临床评估', order_name):
+            return self._failure('excluded_non_imaging')
 
         # 0. 标准化 ACR 项目名，提取核心部位词
         normalized = self._normalize_us_name(order_name)
@@ -596,13 +618,15 @@ class USSpectPetMatcher:
             orig_upper = order_name.upper().replace('（', '(').replace('）', ')')
             body_l2 = self._extract_us_body(orig_upper, order_name)
         if not body_l2:
-            return []
+            if re.search(r'穿刺|活检|置管|阻滞|封闭|治疗|引导', order_name):
+                return self._failure('excluded_intervention')
+            return self._failure('lexicon_gap', False)
 
         # 2. 提取扫描方式
         scan = self._extract_us_scan(order_name)
 
         # 3. 查表
-        return self._query_us(body_l2, scan)
+        return self._query_result(self._query_us(body_l2, scan))
 
     def _normalize_us_name(self, name: str) -> str:
         """
@@ -664,15 +688,15 @@ class USSpectPetMatcher:
                 self._last_tier = 'degraded'
                 logger.info(f"[US] 扫描方式降级: {scan_method}→常规 (body={body_l2})")
 
-        # 如果结果过多（>3），智能选择最通用的项目
+        # 多候选不能标记 exact。候选过多时仍只返回最通用项，但明确降级；
+        # 2-3 个候选也降级，避免未经消歧以 1.0 置信度写缓存。
+        if len(result) > 1:
+            self._last_tier = 'degraded'
         if len(result) > 3:
-            # 优先选择 body_part_l3 为空的项目（最通用）
             general = result[result['body_part_l3'] == '']
             if not general.empty:
-                # 只返回第一个通用项
                 return [(str(general.iloc[0]['item_code']),
                         str(general.iloc[0]['item_name']))]
-            # 否则返回第一个
             return [(str(result.iloc[0]['item_code']),
                     str(result.iloc[0]['item_name']))]
 
@@ -683,7 +707,7 @@ class USSpectPetMatcher:
     def _match_spect(self, order_name: str) -> List[Tuple[str, str]]:
         # H1 修复：排除介入/科研类医嘱（与 US/DSA 保持一致）
         if any(marker in order_name for marker in self._spect_unmatchable):
-            return []
+            return self._failure('excluded_non_imaging')
 
         # SPECT 标准表项目名直接包含了描述信息
         # 策略：提取器官关键词 + 显像方式 → 查 body_part_l2 + scan_method
@@ -691,9 +715,9 @@ class USSpectPetMatcher:
         scan = self._extract_spect_scan(order_name)
 
         if not body_l2:
-            return []
+            return self._failure('lexicon_gap', False)
 
-        return self._query_spect(body_l2, scan)
+        return self._query_result(self._query_spect(body_l2, scan))
 
     def _extract_spect_body(self, order_name: str) -> Optional[str]:
         for keywords, body_l2 in self._spect_body_keywords:
@@ -733,17 +757,18 @@ class USSpectPetMatcher:
     def _match_pet(self, order_name: str, modality: str) -> List[Tuple[str, str]]:
         # H1 修复：排除科研/介入类医嘱
         if any(marker in order_name for marker in self._pet_unmatchable):
-            return []
+            return self._failure('excluded_non_imaging')
 
         df = self._pet_ct_items if modality == 'PET/CT' else self._pet_mr_items
         body_l2 = self._extract_pet_body(order_name)
 
         if not body_l2:
-            return []
+            return self._failure('lexicon_gap', False)
 
         mask = df['body_part_l2'] == body_l2
         result = df[mask]
-        return [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
+        pairs = [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
+        return self._query_result(pairs)
 
     def _extract_pet_body(self, order_name: str) -> Optional[str]:
         # 去除前缀
@@ -772,12 +797,12 @@ class USSpectPetMatcher:
         """OCT 匹配：提取部位关键词 → 查 body_part_l2"""
         # H1 修复：排除介入/科研类医嘱
         if any(marker in order_name for marker in self._oct_unmatchable):
-            return []
+            return self._failure('excluded_non_imaging')
 
         body_l2 = self._extract_oct_body(order_name)
         if not body_l2:
-            return []
-        return self._query_oct(body_l2)
+            return self._failure('lexicon_gap', False)
+        return self._query_result(self._query_oct(body_l2))
 
     def _extract_oct_body(self, order_name: str) -> Optional[str]:
         """从医嘱名提取 OCT 部位"""
@@ -801,14 +826,13 @@ class USSpectPetMatcher:
 
     def _match_dsa(self, order_name: str) -> List[Tuple[str, str]]:
         """DSA 匹配：排除介入治疗，提取部位关键词 → 查 body_part_l2"""
-        # 介入治疗排除
         if any(marker in order_name for marker in self._dsa_unmatchable):
-            return []
+            return self._failure('excluded_intervention')
 
         body_l2 = self._extract_dsa_body(order_name)
         if not body_l2:
-            return []
-        return self._query_dsa(body_l2)
+            return self._failure('lexicon_gap', False)
+        return self._query_result(self._query_dsa(body_l2))
 
     def _extract_dsa_body(self, order_name: str) -> Optional[str]:
         """从医嘱名提取 DSA 部位"""

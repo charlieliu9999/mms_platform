@@ -160,7 +160,7 @@ class MatchEngineOrchestrator:
                 if modality in self.KW_MODALITIES:
                     if modality == 'DSA' and reason in {'intervention', 'surgery'}:
                         return True, 'excluded_intervention'
-                    # “手术区域皮肤超声”描述的是检查部位，并非手术操作；US 的
+                    # "手术区域皮肤超声"描述的是检查部位，并非手术操作；US 的
                     # surgery 宽词交给关键词引擎按实际部位继续判断。
                     if modality == 'US' and reason == 'surgery':
                         continue
@@ -195,12 +195,32 @@ class MatchEngineOrchestrator:
         if not self._initialized:
             return _empty_result(record)
 
+        # Phase 3A: DR→MG强制路由检查（修复乳腺检查路由）
+        # 必须在所有匹配逻辑之前执行，确保所有路径都使用正确的模态
+        # 当用户明确指定DR模态，但文本包含乳腺关键词时，强制路由到MG
+        original_modality = modality
+        modality_routed = False
+        if modality == 'DR':
+            if any(k in record for k in ('乳腺', '双乳', '左乳', '右乳', '乳房', '钼靶')):
+                logger.info("DR->MG routing: breast keyword detected, routing DR to MG: %s", record)
+                modality = 'MG'
+                modality_routed = True
+
         # L0：唯一标准名称精确命中。标准库中的有效精确项优先于历史排除词，
-        # 解决 OTHER/IR 错桶以及“标准项存在却被归为缺库/不可匹配”的问题。
+        # 解决 OTHER/IR 错桶以及"标准项存在却被归为缺库/不可匹配"的问题。
         exact_result = self._match_exact_standard_name(record, modality)
         if exact_result is not None:
             if trace is not None:
                 trace['op'] = ['standard_name_exact']
+            # 添加路由信息（无论是否路由都要设置，让调用者知道状态）
+            logger.info(
+                "DR->MG routing: exact match returned, setting routing info: "
+                "original=%s, current=%s, routed=%s",
+                original_modality, modality, modality_routed
+            )
+            exact_result['source_modality'] = original_modality
+            exact_result['effective_modality'] = modality
+            exact_result['modality_routed'] = modality_routed
             return exact_result
 
         # NLP 模态的不可匹配标识检查（统一守卫，在预处理前拦截）
@@ -209,15 +229,6 @@ class MatchEngineOrchestrator:
             if trace is not None:
                 trace['op'] = [f'unmatchable:{reason}']
             return _empty_result(record, tier='none', reason=reason)
-
-        # Phase 3A: DR→MG强制路由检查（修复乳腺检查路由）
-        # 当用户明确指定DR模态，但文本包含乳腺关键词时，强制路由到MG
-        original_modality = modality
-        modality_routed = False
-        if modality == 'DR':
-            if any(k in record for k in ('乳腺', '双乳', '左乳', '右乳', '乳房', '钼靶')):
-                modality = 'MG'
-                modality_routed = True
 
         # 策略分派：US/SPECT/PET → 关键词引擎
         if modality in self.KW_MODALITIES:
@@ -231,7 +242,7 @@ class MatchEngineOrchestrator:
             return result
 
         # CT/MR/DR/RF/MG → NLP pipeline。未支持模态必须返回结构化原因，
-        # 不能与已明确命中的”设计上不可匹配”规则混为一类。
+        # 不能与已明确命中的"设计上不可匹配"规则混为一类。
         if modality not in self.NLP_MODALITIES:
             return _empty_result(record, reason='unsupported_modality')
 
@@ -244,14 +255,27 @@ class MatchEngineOrchestrator:
 
         if trace is not None:
             trace['op'] = []
+        logger.info(
+            "DR->MG routing: calling _inner_match, modality_routed=%s",
+            modality_routed
+        )
         result = self._inner_match(record, process_type, query_fields, modality,
                                    version, trace=trace)
 
         # 添加路由信息到结果中
         if modality_routed:
+            logger.info(
+                "DR->MG routing: adding routing info to result, routed=%s",
+                modality_routed
+            )
             result['source_modality'] = original_modality
             result['effective_modality'] = modality
             result['modality_routed'] = True
+
+        logger.info(
+            "DR->MG routing: final result modality_routed=%s",
+            result.get('modality_routed', 'NOT_SET')
+        )
 
         return result
 
@@ -407,8 +431,8 @@ class MatchEngineOrchestrator:
             return _empty_result(record, tier='error')
 
         standard = [{'code': code, 'name': name} for code, name in pairs]
-        # matcher 在保持旧 List 返回协议的同时，通过 _last_* 区分“未识别实体”、
-        # “实体存在但标准缺失”和“明确排除”，不能再把所有 [] 都归为词库缺失。
+        # matcher 在保持旧 List 返回协议的同时，通过 _last_* 区分"未识别实体"、
+        # "实体存在但标准缺失"和"明确排除"，不能再把所有 [] 都归为词库缺失。
         if standard:
             tier = getattr(self._kw_matcher, '_last_tier', 'exact')
         else:
