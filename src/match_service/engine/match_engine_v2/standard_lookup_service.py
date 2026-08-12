@@ -84,6 +84,33 @@ SCAN_FUZZY_MAP = {
     "直接造影": "关节造影",
 }
 
+# Phase 4: 泛指词汇模糊匹配表（泛指→匹配模式）
+# 用户使用泛指词汇（"关节"、"骨骼"），标准库存储具体部位
+# 通过LIKE模糊匹配返回常见项，tier=degraded
+GENERIC_TERM_PATTERNS = {
+    # 关节类泛指
+    "关节": "%关节%",
+    "四肢及关节": "%关节%",  # "关节"被消歧为"四肢及关节"
+    "肩关节": "%肩关节%",
+    "肘关节": "%肘关节%",
+    "腕关节": "%腕关节%",
+    "髋关节": "%髋关节%",
+    "膝关节": "%膝关节%",
+    "踝关节": "%踝关节%",
+
+    # 骨骼类泛指
+    "骨骼": "%骨%",
+    "骨": "%骨%",
+
+    # 血管类泛指（节段性）
+    "脊髓动脉": "%脊髓动脉%",
+    "脊髓静脉": "%脊髓静脉%",
+
+    # 脊柱节段泛指
+    "脊柱": "%脊柱%",
+    "椎体": "%椎%",
+}
+
 
 class StandardLookupService:
     """
@@ -256,6 +283,29 @@ class StandardLookupService:
             for i in node.pos_dict.get('body', []):
                 bodies += self._resolve_default_branch(node.std_names[i])
             bodies = sorted(set(bodies))
+
+            # Phase 4: 泛指词汇检测
+            # 场景1: bodies为空，检查原始文本是否包含泛指关键词
+            # 场景2: bodies包含"四肢及关节"等泛指部位，也触发模糊匹配
+            generic_bodies_to_add = []
+
+            # 检查已有bodies中是否有泛指词汇
+            for body in bodies:
+                if body in GENERIC_TERM_PATTERNS:
+                    generic_bodies_to_add.append(body)
+
+            # 如果bodies为空，从原始文本中查找
+            if not bodies and node.raw_str:
+                raw_text = node.raw_str
+                for generic_term in GENERIC_TERM_PATTERNS.keys():
+                    if generic_term in raw_text:
+                        generic_bodies_to_add.append(generic_term)
+                        break  # 只添加第一个匹配的泛指词汇
+
+            # 将泛指词汇添加到bodies（如果还没有的话）
+            for generic_body in generic_bodies_to_add:
+                if generic_body not in bodies:
+                    bodies.append(generic_body)
 
             process_vals = []
             for i in node.pos_dict.get(process_type, []):
@@ -446,7 +496,7 @@ class StandardLookupService:
             for s in scan:
                 if s in SCAN_FUZZY_MAP:
                     fuzzy_scans.add(SCAN_FUZZY_MAP[s])
-            
+
             if len(fuzzy_scans) > len(scan):
                 # 同时使用部位层级映射
                 bodies_with_hierarchy = set(bodies_expanded)
@@ -454,7 +504,7 @@ class StandardLookupService:
                     if body in BODY_HIERARCHY_MAP:
                         parent_body = BODY_HIERARCHY_MAP[body]
                         bodies_with_hierarchy.update(self._expand_body_equivalents([parent_body]))
-                
+
                 mask = (
                     df['three_level_name'].isin(list(bodies_with_hierarchy)) &
                     df['scan_name'].isin(list(fuzzy_scans)) &
@@ -464,6 +514,39 @@ class StandardLookupService:
                 if not hit.empty:
                     degraded = True
                     results.append(hit)
+
+        # Phase 4: 泛指词汇模糊匹配（泛指→具体部位）
+        # 场景1: bodies列表包含泛指词汇（如分词器识别出"关节"）
+        # 场景2: bodies列表为空，但原始文本包含泛指关键词
+        if not has_match and scan:
+            # 收集所有泛指词汇（来自bodies或原始文本）
+            generic_terms_found = []
+
+            # 从bodies中查找
+            for body in bodies:
+                if body in GENERIC_TERM_PATTERNS:
+                    generic_terms_found.append(body)
+
+            # 如果bodies为空或没找到泛指词，检查原始文本
+            # 注意：这里需要从调用者传入原始文本，暂时先处理bodies不为空的情况
+            # TODO: 考虑将raw_text作为参数传入
+
+            # 对每个泛指词汇进行模糊匹配
+            for generic_term in generic_terms_found:
+                pattern = GENERIC_TERM_PATTERNS[generic_term]
+                # 使用str.contains进行模糊匹配
+                # 移除pattern中的%通配符，使用pandas的contains
+                search_term = pattern.replace('%', '')
+                mask = (
+                    df['three_level_name'].str.contains(search_term, na=False, regex=False) &
+                    df['scan_name'].isin(scan) &
+                    ((df['post_processing_name'] == '') | df['post_processing_name'].isna())
+                )
+                hit = df[mask]
+                if not hit.empty:
+                    degraded = True
+                    results.append(hit)
+                    has_match = True
 
         if results:
             combined = pd.concat(results).drop_duplicates(subset=['checkitem_name'])
