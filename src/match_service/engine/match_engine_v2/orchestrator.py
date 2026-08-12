@@ -14,7 +14,8 @@ from typing import Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .constants import SPECIAL_ITEM_MARKERS
-from .data_loader import RuleDataLoader
+from ..modality_resolver import infer_text_modality
+from .data_loader import RuleDataLoader, normalize_standard_name
 from .disambiguation_service import DisambiguationService
 from .pattern_processor import PatternProcessor
 from .preprocess_service import PreprocessService
@@ -110,12 +111,15 @@ class MatchEngineOrchestrator:
         # 使独立 match-service 的自建 engine 一路贯通到关键词引擎
         factory = self._kw_matcher_factory
         if factory is None:
-            # Phase A: 改用本地引擎路径
+            # 关键词规则也必须随 EngineHolder.reload() 重载。不能复用模块级 matcher
+            # 单例，否则 NLP 规则已刷新而 keyword_match_rules 仍是旧快照。
             from match_service.engine.keyword.us_spect_pet_matcher import (
-                get_us_spect_pet_matcher,
+                USSpectPetMatcher,
             )
-            factory = get_us_spect_pet_matcher
-        self._kw_matcher = await factory(engine=self.engine)
+            self._kw_matcher = USSpectPetMatcher(engine=self.engine)
+            await self._kw_matcher.initialize()
+        else:
+            self._kw_matcher = await factory(engine=self.engine)
 
         self._initialized = True
         logger.info("[MatchEngineV2] 初始化完成 (NLP + 关键词引擎)")
@@ -154,10 +158,14 @@ class MatchEngineOrchestrator:
 
                 # 关键词引擎模态：仅拦截非影像类标记 + DSA的介入标记
                 if modality in self.KW_MODALITIES:
+                    if modality == 'DSA' and reason in {'intervention', 'surgery'}:
+                        return True, 'excluded_intervention'
+                    # “手术区域皮肤超声”描述的是检查部位，并非手术操作；US 的
+                    # surgery 宽词交给关键词引擎按实际部位继续判断。
+                    if modality == 'US' and reason == 'surgery':
+                        continue
                     if reason in NON_IMAGING_MARKERS:
-                        return True, reason
-                    if modality == 'DSA' and reason == 'intervention':
-                        return True, reason
+                        return True, 'excluded_non_imaging'
                     # 其他标记（如 biopsy, radiotherapy）跳过，让引擎处理
                     continue
 
@@ -187,6 +195,14 @@ class MatchEngineOrchestrator:
         if not self._initialized:
             return _empty_result(record)
 
+        # L0：唯一标准名称精确命中。标准库中的有效精确项优先于历史排除词，
+        # 解决 OTHER/IR 错桶以及“标准项存在却被归为缺库/不可匹配”的问题。
+        exact_result = self._match_exact_standard_name(record, modality)
+        if exact_result is not None:
+            if trace is not None:
+                trace['op'] = ['standard_name_exact']
+            return exact_result
+
         # NLP 模态的不可匹配标识检查（统一守卫，在预处理前拦截）
         is_unmatchable, reason = self._check_unmatchable(record, modality)
         if is_unmatchable:
@@ -194,15 +210,30 @@ class MatchEngineOrchestrator:
                 trace['op'] = [f'unmatchable:{reason}']
             return _empty_result(record, tier='none', reason=reason)
 
+        # Phase 3A: DR→MG强制路由检查（修复乳腺检查路由）
+        # 当用户明确指定DR模态，但文本包含乳腺关键词时，强制路由到MG
+        original_modality = modality
+        modality_routed = False
+        if modality == 'DR':
+            if any(k in record for k in ('乳腺', '双乳', '左乳', '右乳', '乳房', '钼靶')):
+                modality = 'MG'
+                modality_routed = True
+
         # 策略分派：US/SPECT/PET → 关键词引擎
         if modality in self.KW_MODALITIES:
             if trace is not None:
                 trace['op'] = ['keyword_engine']
-            return self._kw_match(record, modality)
+            result = self._kw_match(record, modality)
+            if modality_routed:
+                result['source_modality'] = original_modality
+                result['effective_modality'] = modality
+                result['modality_routed'] = True
+            return result
 
-        # CT/MR/DR/RF/MG → NLP pipeline
+        # CT/MR/DR/RF/MG → NLP pipeline。未支持模态必须返回结构化原因，
+        # 不能与已明确命中的”设计上不可匹配”规则混为一类。
         if modality not in self.NLP_MODALITIES:
-            return _empty_result(record)
+            return _empty_result(record, reason='unsupported_modality')
 
         if modality == 'DR':
             process_type = 'position'
@@ -213,8 +244,149 @@ class MatchEngineOrchestrator:
 
         if trace is not None:
             trace['op'] = []
-        return self._inner_match(record, process_type, query_fields, modality,
-                                 version, trace=trace)
+        result = self._inner_match(record, process_type, query_fields, modality,
+                                   version, trace=trace)
+
+        # 添加路由信息到结果中
+        if modality_routed:
+            result['source_modality'] = original_modality
+            result['effective_modality'] = modality
+            result['modality_routed'] = True
+
+        return result
+
+    def _match_exact_standard_name(self, record: str,
+                                   source_modality: str) -> dict | None:
+        """按规范化名称命中唯一有效标准项。
+
+        同名多编码时，按优先级选择：ACR标准编码 > 其他编码。
+        若仍有多个候选或跨模态冲突，返回 ambiguous。
+        """
+        key = normalize_standard_name(record)
+        candidates = self.data_loader.standard_name_index.get(key, [])
+        if not candidates:
+            return None
+        
+        # 多候选时，先按模态过滤
+        normalized_source = str(source_modality or "").upper()
+        modality_filtered = [
+            c for c in candidates if c["modality"] == normalized_source
+        ] if normalized_source else candidates
+        
+        # 按编码优先级选择（ACR标准 > 自定义）
+        if len(modality_filtered) > 1:
+            candidate = self._select_by_code_priority(modality_filtered)
+            if candidate is None:
+                # 仍有多个同等优先级候选，返回ambiguous
+                standards = [
+                    {"code": item["code"], "name": item["name"]}
+                    for item in modality_filtered
+                ]
+                modalities = {item["modality"] for item in modality_filtered}
+                return {
+                    "check_item": str(record),
+                    "num_standard": len(standards),
+                    "data": [{"raw": str(record), "standard": standards}],
+                    "score": 4,
+                    "tier": "ambiguous",
+                    "confidence": TIER_CONFIDENCE["ambiguous"],
+                    "reason": "exact_name_collision",
+                    "has_entity": True,
+                    "engine": "standard_name_exact_collision",
+                    "source_modality": normalized_source,
+                    "effective_modality": (
+                        next(iter(modalities)) if len(modalities) == 1
+                        else normalized_source
+                    ),
+                }
+        elif len(modality_filtered) == 1:
+            candidate = modality_filtered[0]
+        else:
+            # 模态过滤后无候选，尝试从全部候选中选
+            if len(candidates) > 1:
+                candidate = self._select_by_code_priority(candidates)
+                if candidate is None:
+                    # 仍无法选择，返回ambiguous
+                    standards = [
+                        {"code": item["code"], "name": item["name"]}
+                        for item in candidates
+                    ]
+                    modalities = {item["modality"] for item in candidates}
+                    return {
+                        "check_item": str(record),
+                        "num_standard": len(standards),
+                        "data": [{"raw": str(record), "standard": standards}],
+                        "score": 4,
+                        "tier": "ambiguous",
+                        "confidence": TIER_CONFIDENCE["ambiguous"],
+                        "reason": "exact_name_collision",
+                        "has_entity": True,
+                        "engine": "standard_name_exact_collision",
+                        "source_modality": normalized_source,
+                        "effective_modality": (
+                            next(iter(modalities)) if len(modalities) == 1
+                            else normalized_source
+                        ),
+                    }
+            else:
+                candidate = candidates[0]
+
+        # 检查文本模态与候选模态是否冲突
+        candidate_modality = candidate["modality"]
+        text_modality = infer_text_modality(record)
+        if (
+            text_modality
+            and text_modality != candidate_modality
+            and normalized_source != candidate_modality
+        ):
+            return None
+
+        standard = {"code": candidate["code"], "name": candidate["name"]}
+        return {
+            "check_item": str(record),
+            "num_standard": 1,
+            "data": [{"raw": str(record), "standard": [standard]}],
+            "score": 10,
+            "tier": "exact",
+            "confidence": TIER_CONFIDENCE["exact"],
+            "reason": "",
+            "has_entity": True,
+            "engine": "standard_name_exact",
+            "source_modality": normalized_source,
+            "effective_modality": candidate_modality,
+        }
+
+    @staticmethod
+    def _select_by_code_priority(candidates: list) -> dict | None:
+        """按编码优先级选择唯一候选。
+        
+        优先级：
+        1. ACR标准编码（14位数字，2-9开头）
+        2. 其他编码
+        
+        返回唯一最高优先级候选，或 None（仍有多个同等优先级）。
+        """
+        import re
+        
+        # 优先级顺序：ACR标准 > 其他
+        CODE_PRIORITY = [
+            r'^[2-9]\d{13}$',  # ACR标准编码（14位数字，2-9开头）
+        ]
+        
+        for pattern in CODE_PRIORITY:
+            matches = [c for c in candidates if re.match(pattern, c['code'])]
+            if len(matches) == 1:
+                return matches[0]
+            elif len(matches) > 1:
+                # 同优先级多个，无法选择
+                return None
+        
+        # 没有ACR标准，但只有一个其他编码
+        if len(candidates) == 1:
+            return candidates[0]
+        
+        # 多个非ACR编码，无法选择
+        return None
 
     def _kw_match(self, record: str, modality: str) -> dict:
         """
@@ -235,12 +407,16 @@ class MatchEngineOrchestrator:
             return _empty_result(record, tier='error')
 
         standard = [{'code': code, 'name': name} for code, name in pairs]
-        # C4 修复：读取 matcher 的 _last_tier（降级匹配时为 'degraded'）
-        # 不再一律标记 exact，避免降级结果以 1.0 置信度写入缓存
+        # matcher 在保持旧 List 返回协议的同时，通过 _last_* 区分“未识别实体”、
+        # “实体存在但标准缺失”和“明确排除”，不能再把所有 [] 都归为词库缺失。
         if standard:
             tier = getattr(self._kw_matcher, '_last_tier', 'exact')
         else:
             tier = 'none'
+        reason = getattr(self._kw_matcher, '_last_reason', '')
+        has_entity = getattr(
+            self._kw_matcher, '_last_has_entity', bool(standard)
+        )
         return {
             'check_item': record,
             'num_standard': len(standard),
@@ -248,9 +424,9 @@ class MatchEngineOrchestrator:
             'score': 10 if standard else 0,
             'tier': tier,
             'confidence': TIER_CONFIDENCE[tier],
-            'reason': '',
-            # 关键词引擎为整词匹配：有命中=True，无命中=False（词库未覆盖）
-            'has_entity': bool(standard),
+            'reason': reason,
+            'has_entity': has_entity,
+            'engine': 'keyword',
         }
 
     def _inner_match(self, records: str, process_type: str,
@@ -377,7 +553,12 @@ class MatchEngineOrchestrator:
         if not has_result:
             tier = 'none'
         elif has_unmatched_node:
-            tier = 'ambiguous'
+            # 单候选+唯一子项时，优先返回exact/degraded（技术描述规范化后无残留）
+            if (match_info['num_standard'] == 1 and len(childrens) == 1 
+                and not any(node.degraded for node in childrens)):
+                tier = 'exact'
+            else:
+                tier = 'ambiguous'
         elif any(node.degraded for node in childrens):
             tier = 'degraded'
         elif any(node.fill_default for node in childrens):
