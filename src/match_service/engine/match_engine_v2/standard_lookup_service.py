@@ -32,6 +32,58 @@ BODY_PART_EQUIVALENTS = {
     "腹部": ["腹部", "全腹部"],
 }
 
+# Phase 2: 部位层级映射表（子部位→父部位）
+BODY_HIERARCHY_MAP = {
+    # 消化系统
+    "小肠": "全腹部",
+    "十二指肠": "全腹部",
+    "空肠": "全腹部",
+    "回肠": "全腹部",
+    "结肠": "全腹部",
+    "乙状结肠": "全腹部",
+    "直肠": "盆腔",
+    # 泌尿系统
+    "膀胱": "盆腔",
+    "前列腺": "盆腔",
+    "子宫": "盆腔",
+    "卵巢": "盆腔",
+    # 头颈部
+    "眼部": "头颅",
+    "眼眶": "头颅",
+    "鼻": "头颅",
+    "鼻腔": "头颅",
+    "鼻窦": "头颅",
+    "喉": "颈部",
+    "咽": "颈部",
+    # 关节细分
+    "双肩关节": "四肢及关节",
+    "双肘关节": "四肢及关节",
+    "双腕关节": "四肢及关节",
+    "双髋关节": "四肢及关节",
+    "双膝关节": "四肢及关节",
+    "双踝关节": "四肢及关节",
+}
+
+# Phase 2: 扫描方式模糊映射（特殊序列→基础扫描）
+SCAN_FUZZY_MAP = {
+    # MR特殊序列→基础扫描
+    "体素内非相干运动弥散成像(IVIM)": "平扫",
+    "液体衰减反转恢复序列(FLAIR)": "平扫",
+    "短时反转恢复序列(STIR)": "平扫",
+    "双反转恢复序列(DIR)": "平扫",
+    "Haste序列": "平扫",
+    "Trufi序列": "平扫",
+    "3D-FLAIR序列": "平扫",
+    "T2WI": "平扫",
+    "T1WI": "平扫",
+    # CT/MR动态扫描→增强
+    "动态增强": "增强",
+    "动态对比增强(DCE-MRI)": "增强",
+    "多期增强": "增强",
+    # 造影类型→关节造影/平扫
+    "直接造影": "关节造影",
+}
+
 
 class StandardLookupService:
     """
@@ -103,6 +155,61 @@ class StandardLookupService:
             'CTV': 'CT静脉成像(CTV)',
         }
         return abbreviation_map.get(scan, scan)
+
+    def _supplement_base_scans(self, df_std: pd.DataFrame, 
+                               bodies: List[str], 
+                               scans: List[str],
+                               post_processing: List[str],
+                               dup_set: Set[str]) -> List[Tuple[str, str]]:
+        """
+        修复4: 为后处理项补充基础扫描项
+        
+        当匹配结果中包含后处理项（三维重建/MPR等）时，自动补充对应的
+        基础扫描项（平扫/增强）。例如：
+        - CT胸部+腹部+盆腔三维重建 → 补充 CT胸部平扫 + CT腹部平扫 + CT盆腔平扫
+        - CT全腹部(平扫)+CT三维重建 → 补充 CT全腹部平扫
+        
+        Args:
+            df_std: 标准表DataFrame
+            bodies: 部位列表
+            scans: 扫描方式列表（平扫/增强等）
+            post_processing: 后处理方式列表（三维重建/MPR等）
+            dup_set: 已匹配项集合（用于去重）
+        
+        Returns:
+            [(标准项名称, 标准项编码), ...]
+        """
+        results = []
+        
+        # 只有在有后处理项时才补充
+        if not post_processing:
+            return results
+        
+        # 如果没有明确的扫描方式，默认使用平扫
+        # 这是因为后处理（三维重建等）通常是基于平扫图像的
+        scan_list = scans if scans else ['平扫']
+        
+        # 展开部位等价名称
+        bodies_expanded = self._expand_body_equivalents(bodies) if bodies else []
+        
+        # 查询对应的基础扫描项（无后处理）
+        for scan in scan_list:
+            mask = (
+                df_std['three_level_name'].isin(bodies_expanded) &
+                df_std['scan_name'].isin([scan]) &
+                ((df_std['post_processing_name'] == '') | df_std['post_processing_name'].isna())
+            )
+            matches = df_std[mask]
+            
+            for _, row in matches.iterrows():
+                name = row['checkitem_name']
+                code = row['checkitem_code']
+                
+                # 跳过已存在的项
+                if name not in dup_set:
+                    results.append((name, code))
+        
+        return results
 
     # ─── Step 9: 补充默认处理方式 ──────────────────────────────────────────
 
@@ -180,11 +287,41 @@ class StandardLookupService:
             for _, row in candidates.iterrows():
                 name = row['checkitem_name']
                 code = row['checkitem_code']
+                
+                # 修复1: 过滤跨模态标准项（数据质量问题防御）
+                # 检查标准项名称前缀是否与查询模态一致
+                # 例如：MR查询不应返回"CT全脊柱"这样的项目
+                name_upper = name.upper().replace('*', '').strip()
+                
+                # 提取标准项名称的模态前缀
+                item_modality_prefix = None
+                for mod_prefix in ['CT', 'MR', 'DR', 'DSA', 'MG', 'RF', 'US', 'SPECT', 'PET']:
+                    if name_upper.startswith(mod_prefix):
+                        item_modality_prefix = mod_prefix
+                        break
+                
+                # 如果标准项有明确的模态前缀，且与查询模态不匹配，则跳过
+                if item_modality_prefix and item_modality_prefix != modality.upper():
+                    continue
+                
                 if name in dup_set:
                     continue
                 dup_set.add(name)
                 node.standard_check_name.append(name)
                 node.standard_check_code.append(code)
+            
+            # 修复4: CT/MR后处理项补充基础扫描
+            # 当匹配到后处理项（三维重建/MPR等）且有明确部位时，
+            # 自动补充对应的基础扫描项（平扫/增强）
+            # 如果没有明确扫描方式，默认补充平扫
+            if modality in ('CT', 'MR') and post_vals and bodies:
+                base_scans = self._supplement_base_scans(
+                    df_std, bodies, process_vals, post_vals, dup_set)
+                for name, code in base_scans:
+                    if name not in dup_set:
+                        dup_set.add(name)
+                        node.standard_check_name.append(name)
+                        node.standard_check_code.append(code)
 
     def _query_standard_table(self, df: pd.DataFrame, modality: str,
                               bodies: List[str], process_type: str,
@@ -281,6 +418,52 @@ class StandardLookupService:
                     if not hit.empty:
                         degraded = True
                         results.append(hit)
+                        has_match = True
+
+        # Phase 2 Level 2: 部位层级映射（小肠→全腹部）
+        if not has_match and scan and bodies:
+            bodies_with_hierarchy = set(bodies_expanded)
+            for body in bodies:
+                if body in BODY_HIERARCHY_MAP:
+                    parent_body = BODY_HIERARCHY_MAP[body]
+                    bodies_with_hierarchy.update(self._expand_body_equivalents([parent_body]))
+            
+            if len(bodies_with_hierarchy) > len(bodies_expanded):
+                mask = (
+                    df['three_level_name'].isin(list(bodies_with_hierarchy)) &
+                    df['scan_name'].isin(scan) &
+                    ((df['post_processing_name'] == '') | df['post_processing_name'].isna())
+                )
+                hit = df[mask]
+                if not hit.empty:
+                    degraded = True
+                    results.append(hit)
+                    has_match = True
+        
+        # Phase 2 Level 3: 扫描方式模糊匹配（特殊序列→基础扫描）
+        if not has_match and scan and bodies:
+            fuzzy_scans = set(scan)
+            for s in scan:
+                if s in SCAN_FUZZY_MAP:
+                    fuzzy_scans.add(SCAN_FUZZY_MAP[s])
+            
+            if len(fuzzy_scans) > len(scan):
+                # 同时使用部位层级映射
+                bodies_with_hierarchy = set(bodies_expanded)
+                for body in bodies:
+                    if body in BODY_HIERARCHY_MAP:
+                        parent_body = BODY_HIERARCHY_MAP[body]
+                        bodies_with_hierarchy.update(self._expand_body_equivalents([parent_body]))
+                
+                mask = (
+                    df['three_level_name'].isin(list(bodies_with_hierarchy)) &
+                    df['scan_name'].isin(list(fuzzy_scans)) &
+                    ((df['post_processing_name'] == '') | df['post_processing_name'].isna())
+                )
+                hit = df[mask]
+                if not hit.empty:
+                    degraded = True
+                    results.append(hit)
 
         if results:
             combined = pd.concat(results).drop_duplicates(subset=['checkitem_name'])
