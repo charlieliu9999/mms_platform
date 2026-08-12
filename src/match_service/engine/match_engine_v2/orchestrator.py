@@ -775,38 +775,46 @@ class MatchEngineOrchestrator:
         Phase 7: 加载所有模态的标准项使用统计（初始化时调用）
 
         从 match_cache 表聚合各标准项的使用频率
+        解析 result_json 提取标准项 code
 
         Returns:
             {modality: {checkitem_code: usage_count}} 嵌套字典
         """
         from sqlalchemy import text
+        import json
 
         try:
             async with self.engine.begin() as conn:
-                # 从缓存表统计各标准项的命中次数（按模态分组）
+                # 从缓存表读取所有记录（result_json 包含匹配结果）
                 result = await conn.execute(
                     text("""
-                        SELECT
-                            modality,
-                            jsonb_array_elements(result_codes) AS code,
-                            SUM(hit_count) AS usage_count
+                        SELECT modality, result_json, hit_count
                         FROM match_cache
-                        WHERE result_codes IS NOT NULL
-                        GROUP BY modality, code
+                        WHERE result_json IS NOT NULL
+                          AND hit_count > 0
                     """)
                 )
 
                 all_stats = {}
                 for row in result:
                     modality = row[0]
-                    code = row[1]
-                    # 移除 JSON 字符串的引号
-                    if isinstance(code, str):
-                        code = code.strip('"')
+                    result_json = row[1]
+                    hit_count = row[2]
 
                     if modality not in all_stats:
                         all_stats[modality] = {}
-                    all_stats[modality][code] = int(row[2])
+
+                    # 解析 result_json 提取标准项 code
+                    try:
+                        result_data = json.loads(result_json)
+                        # result_json 格式: {"data": [{"standard": [{"code": "...", "name": "..."}]}]}
+                        for item in result_data.get('data', []):
+                            for std in item.get('standard', []):
+                                code = std.get('code')
+                                if code:
+                                    all_stats[modality][code] = all_stats[modality].get(code, 0) + hit_count
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        continue
 
                 logger.info(
                     f"Phase 7: 加载使用统计完成 - "
