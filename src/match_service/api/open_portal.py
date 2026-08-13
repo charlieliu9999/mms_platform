@@ -303,8 +303,10 @@ async def get_standard_items(
                 body_part_l1, body_part_l1_code,
                 body_part_l2, body_part_l2_code,
                 body_part_l3, body_part_l3_code,
+                body_part_code,
                 scan_method, scan_method_code,
                 post_processing, post_processing_code,
+                insurance_code,
                 version, source
             FROM standard_check_items
             WHERE {where_sql}
@@ -331,12 +333,14 @@ async def get_standard_items(
                 "body_part_l2_code": row[8],
                 "body_part_l3": row[9],
                 "body_part_l3_code": row[10],
-                "scan_method": row[11],
-                "scan_method_code": row[12],
-                "post_processing": row[13],
-                "post_processing_code": row[14],
-                "version": row[15],
-                "source": row[16]
+                "body_part_code": row[11],
+                "scan_method": row[12],
+                "scan_method_code": row[13],
+                "post_processing": row[14],
+                "post_processing_code": row[15],
+                "insurance_code": row[16],
+                "version": row[17],
+                "source": row[18]
             })
         
         return {
@@ -440,8 +444,10 @@ async def get_standard_item(
                 body_part_l1, body_part_l1_code,
                 body_part_l2, body_part_l2_code,
                 body_part_l3, body_part_l3_code,
+                body_part_code,
                 scan_method, scan_method_code,
                 post_processing, post_processing_code,
+                insurance_code,
                 source, version, coverage_status, supplement_status,
                 created_at, updated_at
             FROM standard_check_items
@@ -464,16 +470,18 @@ async def get_standard_item(
             "body_part_l2_code": row[8],
             "body_part_l3": row[9],
             "body_part_l3_code": row[10],
-            "scan_method": row[11],
-            "scan_method_code": row[12],
-            "post_processing": row[13],
-            "post_processing_code": row[14],
-            "source": row[15],
-            "version": row[16],
-            "coverage_status": row[17],
-            "supplement_status": row[18],
-            "created_at": str(row[19]) if row[19] else None,
-            "updated_at": str(row[20]) if row[20] else None
+            "body_part_code": row[11],
+            "scan_method": row[12],
+            "scan_method_code": row[13],
+            "post_processing": row[14],
+            "post_processing_code": row[15],
+            "insurance_code": row[16],
+            "source": row[17],
+            "version": row[18],
+            "coverage_status": row[19],
+            "supplement_status": row[20],
+            "created_at": str(row[21]) if row[21] else None,
+            "updated_at": str(row[22]) if row[22] else None
         }
     
     except HTTPException:
