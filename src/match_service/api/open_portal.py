@@ -439,7 +439,7 @@ async def get_standard_item(
     """
     try:
         result = await session.execute(text("""
-            SELECT 
+            SELECT
                 id, item_code, item_name, modality, modality_code,
                 body_part_l1, body_part_l1_code,
                 body_part_l2, body_part_l2_code,
@@ -449,39 +449,65 @@ async def get_standard_item(
                 post_processing, post_processing_code,
                 insurance_code,
                 source, version, coverage_status, supplement_status,
-                created_at, updated_at
+                created_at, updated_at,
+                body_position, scan_scope, contrast_agent,
+                image_region, image_focus, scan_method_detail, scan_param,
+                coil, base_sequence, compose_sequence,
+                clinical_indication, clinical_significance,
+                organs, anatomical_structure, technical_notes,
+                image_grade, image_score
             FROM standard_check_items
             WHERE id = :item_id AND is_active = true
         """), {"item_id": item_id})
-        
+
         row = result.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="标准项目不存在")
-        
+
+        # 使用 _mapping 属性按列名访问，避免硬编码索引的脆弱性
+        row_dict = dict(row._mapping)
+
         return {
-            "id": row[0],
-            "item_code": row[1],
-            "item_name": row[2],
-            "modality": row[3],
-            "modality_code": row[4],
-            "body_part_l1": row[5],
-            "body_part_l1_code": row[6],
-            "body_part_l2": row[7],
-            "body_part_l2_code": row[8],
-            "body_part_l3": row[9],
-            "body_part_l3_code": row[10],
-            "body_part_code": row[11],
-            "scan_method": row[12],
-            "scan_method_code": row[13],
-            "post_processing": row[14],
-            "post_processing_code": row[15],
-            "insurance_code": row[16],
-            "source": row[17],
-            "version": row[18],
-            "coverage_status": row[19],
-            "supplement_status": row[20],
-            "created_at": str(row[21]) if row[21] else None,
-            "updated_at": str(row[22]) if row[22] else None
+            "id": row_dict["id"],
+            "item_code": row_dict["item_code"],
+            "item_name": row_dict["item_name"],
+            "modality": row_dict["modality"],
+            "modality_code": row_dict["modality_code"],
+            "body_part_l1": row_dict["body_part_l1"],
+            "body_part_l1_code": row_dict["body_part_l1_code"],
+            "body_part_l2": row_dict["body_part_l2"],
+            "body_part_l2_code": row_dict["body_part_l2_code"],
+            "body_part_l3": row_dict["body_part_l3"],
+            "body_part_l3_code": row_dict["body_part_l3_code"],
+            "body_part_code": row_dict["body_part_code"],
+            "scan_method": row_dict["scan_method"],
+            "scan_method_code": row_dict["scan_method_code"],
+            "post_processing": row_dict["post_processing"],
+            "post_processing_code": row_dict["post_processing_code"],
+            "insurance_code": row_dict["insurance_code"],
+            "source": row_dict["source"],
+            "version": row_dict["version"],
+            "coverage_status": row_dict["coverage_status"],
+            "supplement_status": row_dict["supplement_status"],
+            "created_at": str(row_dict["created_at"]) if row_dict["created_at"] else None,
+            "updated_at": str(row_dict["updated_at"]) if row_dict["updated_at"] else None,
+            "body_position": row_dict["body_position"],
+            "scan_scope": row_dict["scan_scope"],
+            "contrast_agent": row_dict["contrast_agent"],
+            "image_region": row_dict["image_region"],
+            "image_focus": row_dict["image_focus"],
+            "scan_method_detail": row_dict["scan_method_detail"],
+            "scan_param": row_dict["scan_param"],
+            "coil": row_dict["coil"],
+            "base_sequence": row_dict["base_sequence"],
+            "compose_sequence": row_dict["compose_sequence"],
+            "clinical_indication": row_dict["clinical_indication"],
+            "clinical_significance": row_dict["clinical_significance"],
+            "organs": row_dict["organs"],
+            "anatomical_structure": row_dict["anatomical_structure"],
+            "technical_notes": row_dict["technical_notes"],
+            "image_grade": row_dict["image_grade"],
+            "image_score": row_dict["image_score"]
         }
     
     except HTTPException:

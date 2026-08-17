@@ -32,7 +32,9 @@ class DisambiguationService:
         (r'左心房肺静脉|左心房',           '左心房肺静脉', '左心房肺静脉'),
         (r'肺静脉',                      '肺静脉',       '肺静脉'),
         (r'肺动脉',                      '肺动脉',       None),
-        (r'支气管动脉|支气管.*血管',       '支气管动脉',   None),
+        # 支气管血管匹配优化：避免非贪婪量词的回溯性能问题
+        # 策略：先匹配"支气管动脉"直接命中，或用字符类限制中间内容避免回溯
+        (r'支气管动脉|支气管[^血]{0,29}血管', '支气管动脉',   None),
         (r'胸腹主动脉',                   '胸腹主动脉',   None),
         (r'胸主动脉',                    '胸主动脉',     None),
         (r'腹主动脉|夹层动脉瘤|主动脉瘤', '腹主动脉',     None),
@@ -627,7 +629,7 @@ class DisambiguationService:
                       step: str) -> Tuple[str, str]:
         in_process_set = set(inbody.split('|'))
         body_map = self.data_loader.body_map
-        df_body = body_map.query(f'version=="{version}" and step=="{step}"')
+        df_body = body_map[(body_map['version'] == version) & (body_map['step'] == step)]
         ret_set: Set[str] = set()
         dst_body = ''
         for _, row in df_body.iterrows():
@@ -682,8 +684,8 @@ class DisambiguationService:
         versions = VERSION_FALLBACK.get(version, [version])
         df_0 = pd.DataFrame()
         for ver in versions:
-            df_0 = self.data_loader.df_body_disamb.query(
-                f'src_process=="{process}" and modality=="{modality}" and version=="{ver}"')
+            df = self.data_loader.df_body_disamb
+            df_0 = df[(df['src_process'] == process) & (df['modality'] == modality) & (df['version'] == ver)]
             if not df_0.empty:
                 break
 
@@ -697,9 +699,9 @@ class DisambiguationService:
                         df_0.loc[idx, 'dst_body'] = body
                 return 'found', df_0
             return 'unfound', None
-        df_1 = df_0.query(f'src_body=="{body}"')
+        df_1 = df_0[df_0['src_body'] == body]
         if df_1.empty:
-            df_2 = df_0.query('src_body=="any"')
+            df_2 = df_0[df_0['src_body'] == "any"]
             if df_2.empty:
                 return 'unfound', None
             df_2 = df_2.copy()
@@ -754,18 +756,22 @@ class DisambiguationService:
         versions = VERSION_FALLBACK.get(version, [version])
         df_0 = pd.DataFrame()
         for ver in versions:
+            df = self.data_loader.df_body_disamb
             if len(body_list) > 1:
-                df_0 = self.data_loader.df_body_disamb.query(
-                    f'src_process=="" and modality=="{modality}" '
-                    f'and version=="{ver}" and src_body=="动脉|静脉"')
+                df_0 = df[
+                    (df['src_process'] == "") & (df['modality'] == modality)
+                    & (df['version'] == ver) & (df['src_body'] == "动脉|静脉")
+                ]
             elif '动脉' in body:
-                df_0 = self.data_loader.df_body_disamb.query(
-                    f'src_process=="" and modality=="{modality}" '
-                    f'and version=="{ver}" and src_body=="动脉"')
+                df_0 = df[
+                    (df['src_process'] == "") & (df['modality'] == modality)
+                    & (df['version'] == ver) & (df['src_body'] == "动脉")
+                ]
             elif '静脉' in body:
-                df_0 = self.data_loader.df_body_disamb.query(
-                    f'src_process=="" and modality=="{modality}" '
-                    f'and version=="{ver}" and src_body=="静脉"')
+                df_0 = df[
+                    (df['src_process'] == "") & (df['modality'] == modality)
+                    & (df['version'] == ver) & (df['src_body'] == "静脉")
+                ]
             if not df_0.empty:
                 break
         if df_0.empty:
@@ -786,8 +792,8 @@ class DisambiguationService:
         versions = VERSION_FALLBACK.get(version, [version])
         body_remap = pd.DataFrame()
         for ver in versions:
-            body_remap = self.data_loader.vessel_map.query(
-                f'src_word=="{body}" and version=="{ver}"')
+            v_df = self.data_loader.vessel_map
+            body_remap = v_df[(v_df['src_word'] == body) & (v_df['version'] == ver)]
             if not body_remap.empty:
                 break
         if len(body_remap) == 1:
@@ -834,8 +840,8 @@ class DisambiguationService:
         versions = VERSION_FALLBACK.get(version, [version])
         df_normal = pd.DataFrame()
         for ver in versions:
-            df_normal = self.data_loader.process_normal.query(
-                f'modality=="{modality}" and version=="{ver}"')
+            p_df = self.data_loader.process_normal
+            df_normal = p_df[(p_df['modality'] == modality) & (p_df['version'] == ver)]
             if not df_normal.empty:
                 break
 

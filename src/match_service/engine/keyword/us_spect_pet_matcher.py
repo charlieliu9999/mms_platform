@@ -517,6 +517,7 @@ class USSpectPetMatcher:
                     f"[USSpectPetMatcher] keyword_match_rules 缺 {mod}/{rtype} 规则组，"
                     f"该组匹配将全部落空。请运行 scripts/seed_keyword_match_rules.py 播种。"
                 )
+                # 优雅降级：返回空列表而非崩溃，避免生产环境因配置问题导致服务不可用
                 return []
             return grp
 

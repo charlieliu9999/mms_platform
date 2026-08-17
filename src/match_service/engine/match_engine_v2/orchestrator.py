@@ -8,6 +8,7 @@
 两套底层引擎各司其职：NLP pipeline 为 CT/MR 的"部位+扫描+后处理"维度设计，
 关键词引擎为 US/PET/SPECT 的"器官+扫描方式/显像方式"维度设计，字段语义不同故不可合并。
 """
+import asyncio
 import logging
 from typing import Dict, List, Tuple
 
@@ -87,45 +88,44 @@ class MatchEngineOrchestrator:
         # 关键词引擎（US/SPECT/PET），懒加载避免循环导入
         self._kw_matcher = None
         self._initialized = False
+        self._init_lock = asyncio.Lock()
 
     async def initialize(self):
-        """初始化所有服务（支持热重载：重复调用时清除旧缓存）"""
-        # C3 修复：热重载时清除旧 tokenizer 缓存，避免返回过期映射
-        if self.tokenizer_service is not None:
-            self.tokenizer_service.clear_cache()
+        """初始化所有服务（支持热重载：重复调用时加锁并原子替换）"""
+        async with self._init_lock:
+            # C3 修复：热重载时清除旧 tokenizer 缓存，避免返回过期映射
+            if self.tokenizer_service is not None:
+                self.tokenizer_service.clear_cache()
 
-        await self.data_loader.initialize()
+            await self.data_loader.initialize()
 
-        self.preprocess_service = PreprocessService(self.data_loader.pre_rules)
-        self.tokenizer_service = TokenizerService(
-            self.data_loader.mdict,
-            self.data_loader.common_normal,
-            self.data_loader.normal_rules
-        )
-        self.pattern_processor = PatternProcessor(self.data_loader)
-        self.disamb_service = DisambiguationService(self.data_loader)
-        self.lookup_service = StandardLookupService(
-            self.data_loader, self.disamb_service)
-
-        # Phase 7: 预加载使用统计（用于智能排序）
-        self.usage_stats_cache = await self._load_all_usage_stats()
-
-        # 关键词引擎（US/SPECT/PET/OCT/DSA），透传本引擎的 DB engine
-        # 使独立 match-service 的自建 engine 一路贯通到关键词引擎
-        factory = self._kw_matcher_factory
-        if factory is None:
-            # 关键词规则也必须随 EngineHolder.reload() 重载。不能复用模块级 matcher
-            # 单例，否则 NLP 规则已刷新而 keyword_match_rules 仍是旧快照。
-            from match_service.engine.keyword.us_spect_pet_matcher import (
-                USSpectPetMatcher,
+            self.preprocess_service = PreprocessService(self.data_loader.pre_rules)
+            self.tokenizer_service = TokenizerService(
+                self.data_loader.mdict,
+                self.data_loader.common_normal,
+                self.data_loader.normal_rules
             )
-            self._kw_matcher = USSpectPetMatcher(engine=self.engine)
-            await self._kw_matcher.initialize()
-        else:
-            self._kw_matcher = await factory(engine=self.engine)
+            self.pattern_processor = PatternProcessor(self.data_loader)
+            self.disamb_service = DisambiguationService(self.data_loader)
+            self.lookup_service = StandardLookupService(
+                self.data_loader, self.disamb_service)
 
-        self._initialized = True
-        logger.info("[MatchEngineV2] 初始化完成 (NLP + 关键词引擎)")
+            # Phase 7: 预加载使用统计（用于智能排序）
+            self.usage_stats_cache = await self._load_all_usage_stats()
+
+            # 关键词引擎（US/SPECT/PET/OCT/DSA），透传本引擎的 DB engine
+            factory = self._kw_matcher_factory
+            if factory is None:
+                from match_service.engine.keyword.us_spect_pet_matcher import (
+                    USSpectPetMatcher,
+                )
+                self._kw_matcher = USSpectPetMatcher(engine=self.engine)
+                await self._kw_matcher.initialize()
+            else:
+                self._kw_matcher = await factory(engine=self.engine)
+
+            self._initialized = True
+            logger.info("[MatchEngineV2] 初始化完成 (NLP + 关键词引擎)")
 
     @property
     def is_ready(self) -> bool:
@@ -215,14 +215,14 @@ class MatchEngineOrchestrator:
         if exact_result is not None:
             if trace is not None:
                 trace['op'] = ['standard_name_exact']
-            # 添加路由信息（无论是否路由都要设置，让调用者知道状态）
             logger.info(
                 "DR->MG routing: exact match returned, setting routing info: "
                 "original=%s, current=%s, routed=%s",
                 original_modality, modality, modality_routed
             )
             exact_result['source_modality'] = original_modality
-            exact_result['effective_modality'] = modality
+            if not exact_result.get('effective_modality'):
+                exact_result['effective_modality'] = modality
             exact_result['modality_routed'] = modality_routed
             return exact_result
 
@@ -296,67 +296,44 @@ class MatchEngineOrchestrator:
         
         # 多候选时，先按模态过滤
         normalized_source = str(source_modality or "").upper()
-        modality_filtered = [
-            c for c in candidates if c["modality"] == normalized_source
-        ] if normalized_source else candidates
-        
-        # 按编码优先级选择（ACR标准 > 自定义）
+        if normalized_source:
+            modality_filtered = [
+                c for c in candidates if c["modality"] == normalized_source
+            ]
+            if not modality_filtered:
+                # 若请求模态无候选，严格返回 None，不跨模态回退
+                # 用户明确指定模态时，不应返回其他模态的结果
+                return None
+        else:
+            modality_filtered = candidates
+
+        # 按编码优先级选择：多候选时视为同名多编码碰撞，统一返回 ambiguous 供消歧处理
         if len(modality_filtered) > 1:
-            candidate = self._select_by_code_priority(modality_filtered)
-            if candidate is None:
-                # 仍有多个同等优先级候选，返回ambiguous
-                standards = [
-                    {"code": item["code"], "name": item["name"]}
-                    for item in modality_filtered
-                ]
-                modalities = {item["modality"] for item in modality_filtered}
-                return {
-                    "check_item": str(record),
-                    "num_standard": len(standards),
-                    "data": [{"raw": str(record), "standard": standards}],
-                    "score": 4,
-                    "tier": "ambiguous",
-                    "confidence": TIER_CONFIDENCE["ambiguous"],
-                    "reason": "exact_name_collision",
-                    "has_entity": True,
-                    "engine": "standard_name_exact_collision",
-                    "source_modality": normalized_source,
-                    "effective_modality": (
-                        next(iter(modalities)) if len(modalities) == 1
-                        else normalized_source
-                    ),
-                }
+            standards = [
+                {"code": item["code"], "name": item["name"]}
+                for item in modality_filtered
+            ]
+            modalities = {item["modality"] for item in modality_filtered}
+            return {
+                "check_item": str(record),
+                "num_standard": len(standards),
+                "data": [{"raw": str(record), "standard": standards}],
+                "score": 4,
+                "tier": "ambiguous",
+                "confidence": TIER_CONFIDENCE["ambiguous"],
+                "reason": "exact_name_collision",
+                "has_entity": True,
+                "engine": "standard_name_exact_collision",
+                "source_modality": normalized_source,
+                "effective_modality": (
+                    next(iter(modalities)) if len(modalities) == 1
+                    else normalized_source
+                ),
+            }
         elif len(modality_filtered) == 1:
             candidate = modality_filtered[0]
         else:
-            # 模态过滤后无候选，尝试从全部候选中选
-            if len(candidates) > 1:
-                candidate = self._select_by_code_priority(candidates)
-                if candidate is None:
-                    # 仍无法选择，返回ambiguous
-                    standards = [
-                        {"code": item["code"], "name": item["name"]}
-                        for item in candidates
-                    ]
-                    modalities = {item["modality"] for item in candidates}
-                    return {
-                        "check_item": str(record),
-                        "num_standard": len(standards),
-                        "data": [{"raw": str(record), "standard": standards}],
-                        "score": 4,
-                        "tier": "ambiguous",
-                        "confidence": TIER_CONFIDENCE["ambiguous"],
-                        "reason": "exact_name_collision",
-                        "has_entity": True,
-                        "engine": "standard_name_exact_collision",
-                        "source_modality": normalized_source,
-                        "effective_modality": (
-                            next(iter(modalities)) if len(modalities) == 1
-                            else normalized_source
-                        ),
-                    }
-            else:
-                candidate = candidates[0]
+            return None
 
         # 检查文本模态与候选模态是否冲突
         candidate_modality = candidate["modality"]
@@ -792,6 +769,8 @@ class MatchEngineOrchestrator:
                         FROM match_cache
                         WHERE result_json IS NOT NULL
                           AND hit_count > 0
+                        ORDER BY hit_count DESC
+                        LIMIT 100000
                     """)
                 )
 

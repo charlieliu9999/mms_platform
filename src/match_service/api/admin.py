@@ -1429,3 +1429,613 @@ async def match_procedures(
         "results": results,
     }
 
+
+# ─── 技术详情补全候选与正式参数库 ─────────────────────────────────────────
+
+
+TECHNICAL_LIBRARY_FIELDS = [
+    "body_position", "scan_scope", "contrast_agent", "image_region",
+    "image_focus", "scan_method_detail", "scan_param", "coil",
+    "base_sequence", "compose_sequence", "clinical_indication",
+    "clinical_significance", "organs", "anatomical_structure",
+    "technical_notes", "image_grade", "image_score",
+]
+
+TECHNICAL_LIBRARY_PRESENT_SQL = " OR ".join(
+    f"s.{field} IS NOT NULL" for field in TECHNICAL_LIBRARY_FIELDS[:-2]
+)
+
+
+class TechnicalDetailGenerateRequest(BaseModel):
+    version: str = "V3.8.2"
+    modality: str = Field("CT", pattern="^(CT|MR)$")
+    item_code: Optional[str] = None
+    limit: Optional[int] = Field(None, ge=1, le=1000)
+    persist: bool = False
+
+
+class TechnicalDetailReviewRequest(BaseModel):
+    decision: str = Field(..., pattern="^(approved|rejected)$")
+    reviewer: str = Field("后台操作", min_length=1, max_length=100)
+    notes: Optional[str] = None
+
+
+class TechnicalDetailEditRequest(BaseModel):
+    candidate_fields: Dict[str, Optional[str]]
+    editor: str = Field("后台操作", min_length=1, max_length=100)
+    notes: Optional[str] = None
+
+
+class TechnicalDetailPublishRequest(BaseModel):
+    publisher: str = Field("后台操作", min_length=1, max_length=100)
+    notes: Optional[str] = None
+
+
+class TechnicalDetailRollbackRequest(BaseModel):
+    operator: str = Field("后台操作", min_length=1, max_length=100)
+    reason: str = Field(..., min_length=1)
+
+
+class TechnicalDetailBulkPublishRequest(BaseModel):
+    candidate_ids: Optional[List[int]] = None
+    select_all: bool = False
+    status: Optional[str] = Field(None, pattern="^(pending_review|approved|rejected|applied|superseded)$")
+    modality: Optional[str] = Field(None, pattern="^(CT|MR)$")
+    search: Optional[str] = Field(None, max_length=100)
+    has_conflicts: Optional[bool] = None
+    operator: str = Field("后台批量操作", min_length=1, max_length=100)
+    notes: Optional[str] = None
+
+
+@router.get("/technical-detail-library/stats")
+async def get_technical_detail_library_stats(
+    session: AsyncSession = Depends(_get_session),
+):
+    """正式技术参数库统计及来源分布。"""
+    summary = (
+        await session.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE s.is_active = true) AS active_total,
+                       COUNT(*) FILTER (WHERE s.modality = 'CT') AS ct_total,
+                       COUNT(*) FILTER (WHERE s.modality = 'MR') AS mr_total
+                FROM standard_check_items s
+                WHERE {TECHNICAL_LIBRARY_PRESENT_SQL}
+                """
+            )
+        )
+    ).mappings().one()
+    source_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT source_kind, source_table, COUNT(*) AS count
+                FROM technical_detail_provenance
+                WHERE is_active = true
+                GROUP BY source_kind, source_table
+                ORDER BY source_kind, source_table
+                """
+            )
+        )
+    ).mappings().all()
+    return {
+        **dict(summary),
+        "sources": [dict(row) for row in source_rows],
+    }
+
+
+@router.get("/technical-detail-library")
+async def list_technical_detail_library(
+    modality: Optional[str] = Query(None, pattern="^(CT|MR)$"),
+    source_kind: Optional[str] = Query(None, pattern="^(historical_import|rule_fusion|evaluation_import)$"),
+    search: Optional[str] = Query(None, max_length=100),
+    is_active: Optional[bool] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(_get_session),
+):
+    """查询已经进入正式标准库的技术参数及其数据来源。"""
+    conditions = [f"({TECHNICAL_LIBRARY_PRESENT_SQL})"]
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if modality:
+        conditions.append("s.modality = :modality")
+        params["modality"] = modality
+    if search:
+        conditions.append("(s.item_code ILIKE :search OR s.item_name ILIKE :search)")
+        params["search"] = f"%{search}%"
+    if is_active is not None:
+        conditions.append("s.is_active = :is_active")
+        params["is_active"] = is_active
+    if source_kind:
+        conditions.append(
+            """
+            EXISTS (
+                SELECT 1 FROM technical_detail_provenance pf
+                WHERE pf.target_item_id = s.id
+                  AND pf.is_active = true
+                  AND pf.source_kind = :source_kind
+            )
+            """
+        )
+        params["source_kind"] = source_kind
+    where_sql = " AND ".join(conditions)
+
+    total = (
+        await session.execute(
+            text(f"SELECT COUNT(*) FROM standard_check_items s WHERE {where_sql}"),
+            params,
+        )
+    ).scalar_one()
+
+    columns = ", ".join(f"s.{field}" for field in TECHNICAL_LIBRARY_FIELDS)
+    rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT s.id, s.item_code, s.item_name, s.modality, s.version,
+                       s.scan_method, s.post_processing, s.is_active,
+                       {columns},
+                       COALESCE(provenance.sources, '[]'::jsonb) AS sources
+                FROM standard_check_items s
+                LEFT JOIN LATERAL (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'id', p.id,
+                            'source_kind', p.source_kind,
+                            'source_system', p.source_system,
+                            'source_table', p.source_table,
+                            'source_record_key', p.source_record_key,
+                            'import_batch', p.import_batch,
+                            'match_method', p.match_method,
+                            'field_names', p.field_names_json,
+                            'source_notes', p.source_notes,
+                            'publication_id', p.publication_id,
+                            'created_at', p.created_at,
+                            'source_label', CASE p.source_table
+                                WHEN 'ai.CT_specification' THEN '生产标准库 · CT技术参数'
+                                WHEN 'ai.MR_specification' THEN '生产标准库 · MR技术参数'
+                                WHEN 'ai.CheckitemGrade' THEN '生产标准库 · 评价指标'
+                                WHEN 'technical_detail_candidates' THEN '规则融合候选 · 审核发布'
+                                ELSE p.source_table
+                            END
+                        ) ORDER BY p.id
+                    ) AS sources
+                    FROM technical_detail_provenance p
+                    WHERE p.target_item_id = s.id AND p.is_active = true
+                ) provenance ON true
+                WHERE {where_sql}
+                ORDER BY s.is_active DESC, s.modality, s.item_code, s.id
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            params,
+        )
+    ).mappings().all()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [dict(row) for row in rows],
+    }
+
+
+@router.get("/technical-detail-library/{item_id}")
+async def get_technical_detail_library_item(
+    item_id: int,
+    session: AsyncSession = Depends(_get_session),
+):
+    """查询单个正式项目的完整技术字段和来源证据。"""
+    columns = ", ".join(f"s.{field}" for field in TECHNICAL_LIBRARY_FIELDS)
+    row = (
+        await session.execute(
+            text(
+                f"""
+                SELECT s.id, s.item_code, s.item_name, s.modality, s.version,
+                       s.scan_method, s.post_processing, s.is_active, {columns},
+                       COALESCE(provenance.sources, '[]'::jsonb) AS sources
+                FROM standard_check_items s
+                LEFT JOIN LATERAL (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'id', p.id,
+                            'source_kind', p.source_kind,
+                            'source_system', p.source_system,
+                            'source_table', p.source_table,
+                            'source_record_key', p.source_record_key,
+                            'import_batch', p.import_batch,
+                            'match_method', p.match_method,
+                            'field_names', p.field_names_json,
+                            'source_notes', p.source_notes,
+                            'publication_id', p.publication_id,
+                            'created_at', p.created_at,
+                            'source_label', CASE p.source_table
+                                WHEN 'ai.CT_specification' THEN '生产标准库 · CT技术参数'
+                                WHEN 'ai.MR_specification' THEN '生产标准库 · MR技术参数'
+                                WHEN 'ai.CheckitemGrade' THEN '生产标准库 · 评价指标'
+                                WHEN 'technical_detail_candidates' THEN '规则融合候选 · 审核发布'
+                                ELSE p.source_table
+                            END
+                        ) ORDER BY p.id
+                    ) AS sources
+                    FROM technical_detail_provenance p
+                    WHERE p.target_item_id = s.id AND p.is_active = true
+                ) provenance ON true
+                WHERE s.id = :id AND ({TECHNICAL_LIBRARY_PRESENT_SQL})
+                """
+            ),
+            {"id": item_id},
+        )
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="正式技术参数不存在")
+    return dict(row)
+
+
+@router.post("/technical-detail-candidates/generate")
+async def generate_technical_detail_candidates(
+    request: TechnicalDetailGenerateRequest,
+    session: AsyncSession = Depends(_get_session),
+):
+    """生成技术详情候选。
+
+    默认 dry-run；即使 ``persist=true`` 也只写候选审核表，不更新正式标准数据。
+    """
+    from ..agent.technical_detail_completion import TechnicalDetailCompletionAgent
+
+    agent = TechnicalDetailCompletionAgent(session)
+    result = await agent.generate_candidates(
+        version=request.version,
+        modality=request.modality,
+        item_code=request.item_code,
+        limit=request.limit,
+        persist=request.persist,
+    )
+    return result
+
+
+@router.get("/technical-detail-candidates")
+async def list_technical_detail_candidates(
+    status: Optional[str] = Query(None, pattern="^(pending_review|approved|rejected|applied|superseded)$"),
+    modality: Optional[str] = Query(None, pattern="^(CT|MR)$"),
+    search: Optional[str] = Query(None, max_length=100),
+    has_conflicts: Optional[bool] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(_get_session),
+):
+    """查询补全候选审核队列（列表不返回大段候选正文）。"""
+    conditions = []
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if status:
+        conditions.append("status = :status")
+        params["status"] = status
+    if modality:
+        conditions.append("modality = :modality")
+        params["modality"] = modality
+    if search:
+        conditions.append("(target_item_code ILIKE :search OR target_item_name ILIKE :search)")
+        params["search"] = f"%{search}%"
+    if has_conflicts is not None:
+        conditions.append("conflicts_json <> '[]'::jsonb" if has_conflicts else "conflicts_json = '[]'::jsonb")
+    where_sql = " AND ".join(conditions) if conditions else "1=1"
+
+    total = (
+        await session.execute(
+            text(f"SELECT COUNT(*) FROM technical_detail_candidates WHERE {where_sql}"),
+            params,
+        )
+    ).scalar()
+    rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT id, target_item_id, target_item_code, target_item_name,
+                       target_version, modality, generation_method, confidence,
+                       conflicts_json, source_item_ids_json, algorithm_version,
+                       rationale, status, reviewer, reviewed_at, has_manual_edits,
+                       last_edited_by, last_edited_at, created_at, updated_at
+                FROM technical_detail_candidates
+                WHERE {where_sql}
+                ORDER BY created_at DESC, id DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            params,
+        )
+    ).mappings().all()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [dict(row) for row in rows],
+    }
+
+
+@router.get("/technical-detail-candidates/stats")
+async def get_technical_detail_candidate_stats(
+    session: AsyncSession = Depends(_get_session),
+):
+    """候选构建、审核和发布统计。"""
+    status_rows = (
+        await session.execute(
+            text("SELECT status, COUNT(*) AS count FROM technical_detail_candidates GROUP BY status")
+        )
+    ).mappings().all()
+    method_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT generation_method, COUNT(*) AS count
+                FROM technical_detail_candidates
+                GROUP BY generation_method
+                """
+            )
+        )
+    ).mappings().all()
+    conflict_count = (
+        await session.execute(
+            text("SELECT COUNT(*) FROM technical_detail_candidates WHERE conflicts_json <> '[]'::jsonb")
+        )
+    ).scalar_one()
+    publication_count = (
+        await session.execute(
+            text("SELECT COUNT(*) FROM technical_detail_publications WHERE status = 'published'")
+        )
+    ).scalar_one()
+    return {
+        "total": sum(row["count"] for row in status_rows),
+        "by_status": {row["status"]: row["count"] for row in status_rows},
+        "by_method": {row["generation_method"]: row["count"] for row in method_rows},
+        "conflict_count": conflict_count,
+        "active_publication_count": publication_count,
+    }
+
+
+@router.get("/technical-detail-candidates/{candidate_id}")
+async def get_technical_detail_candidate(
+    candidate_id: int,
+    session: AsyncSession = Depends(_get_session),
+):
+    """获取候选正文、字段来源与冲突信息。"""
+    from ..agent.technical_detail_completion import TechnicalDetailCompletionAgent
+
+    candidate = await TechnicalDetailCompletionAgent(session).get_candidate(candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="补全候选不存在")
+    return candidate
+
+
+@router.put("/technical-detail-candidates/{candidate_id}")
+async def edit_technical_detail_candidate(
+    candidate_id: int,
+    request: TechnicalDetailEditRequest,
+    session: AsyncSession = Depends(_get_session),
+):
+    """人工编辑候选并保存修订快照；修改后必须重新审核。"""
+    from ..agent.technical_detail_completion import TechnicalDetailCompletionAgent
+
+    try:
+        return await TechnicalDetailCompletionAgent(session).edit_candidate(
+            candidate_id,
+            candidate_fields=request.candidate_fields,
+            editor=request.editor,
+            notes=request.notes,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/technical-detail-candidates/{candidate_id}/review")
+async def review_technical_detail_candidate(
+    candidate_id: int,
+    request: TechnicalDetailReviewRequest,
+    session: AsyncSession = Depends(_get_session),
+):
+    """记录人工审核结论；审核通过不会自动写入正式标准表。"""
+    from ..agent.technical_detail_completion import TechnicalDetailCompletionAgent
+
+    updated = await TechnicalDetailCompletionAgent(session).review_candidate(
+        candidate_id,
+        decision=request.decision,
+        reviewer=request.reviewer,
+        notes=request.notes,
+    )
+    if not updated:
+        raise HTTPException(status_code=409, detail="候选不存在或已完成审核")
+    return {"id": candidate_id, "status": request.decision}
+
+
+@router.post("/technical-detail-candidates/{candidate_id}/publish")
+async def publish_technical_detail_candidate(
+    candidate_id: int,
+    request: TechnicalDetailPublishRequest,
+    session: AsyncSession = Depends(_get_session),
+):
+    """将已审核候选发布到官网数据源，并创建回滚快照。"""
+    from ..agent.technical_detail_completion import TechnicalDetailCompletionAgent
+
+    try:
+        return await TechnicalDetailCompletionAgent(session).publish_candidate(
+            candidate_id,
+            publisher=request.publisher,
+            notes=request.notes,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/technical-detail-bulk/review-and-publish")
+async def bulk_review_and_publish_technical_details(
+    request: TechnicalDetailBulkPublishRequest,
+    session: AsyncSession = Depends(_get_session),
+):
+    """批量确认并发布选中候选，支持跨分页选择当前筛选全部结果。
+
+    批量任务逐条提交并返回失败明细，单条失败不会撤销其他成功发布。
+    """
+    from ..agent.technical_detail_completion import TechnicalDetailCompletionAgent
+
+    candidate_ids = list(dict.fromkeys(request.candidate_ids or []))
+    if request.select_all:
+        conditions = []
+        params: dict[str, Any] = {}
+        if request.status:
+            conditions.append("status = :status")
+            params["status"] = request.status
+        if request.modality:
+            conditions.append("modality = :modality")
+            params["modality"] = request.modality
+        if request.search:
+            conditions.append("(target_item_code ILIKE :search OR target_item_name ILIKE :search)")
+            params["search"] = f"%{request.search}%"
+        if request.has_conflicts is not None:
+            conditions.append(
+                "conflicts_json <> '[]'::jsonb"
+                if request.has_conflicts
+                else "conflicts_json = '[]'::jsonb"
+            )
+        where_sql = " AND ".join(conditions) if conditions else "1=1"
+        rows = await session.execute(
+            text(
+                f"""
+                SELECT id FROM technical_detail_candidates
+                WHERE {where_sql}
+                ORDER BY id
+                LIMIT 1001
+                """
+            ),
+            params,
+        )
+        candidate_ids = [row[0] for row in rows.fetchall()]
+        if len(candidate_ids) > 1000:
+            raise HTTPException(status_code=422, detail="单次批量操作最多处理1000条候选")
+
+    if not candidate_ids:
+        raise HTTPException(status_code=422, detail="请至少选择一条候选")
+    if len(candidate_ids) > 1000:
+        raise HTTPException(status_code=422, detail="单次批量操作最多处理1000条候选")
+
+    agent = TechnicalDetailCompletionAgent(session)
+    published: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+
+    for candidate_id in candidate_ids:
+        try:
+            candidate = await agent.get_candidate(candidate_id)
+            if not candidate:
+                failed.append({"id": candidate_id, "reason": "候选不存在"})
+                continue
+            current_status = candidate["status"]
+            if current_status == "applied":
+                skipped.append({
+                    "id": candidate_id,
+                    "item_code": candidate["target_item_code"],
+                    "reason": "已经发布",
+                })
+                continue
+            if current_status == "pending_review":
+                reviewed = await agent.review_candidate(
+                    candidate_id,
+                    decision="approved",
+                    reviewer=request.operator,
+                    notes=request.notes or "批量确认并发布",
+                )
+                if not reviewed:
+                    raise RuntimeError("候选状态已变化，请刷新后重试")
+            elif current_status != "approved":
+                raise RuntimeError(f"当前状态 {current_status} 不允许批量发布")
+
+            result = await agent.publish_candidate(
+                candidate_id,
+                publisher=request.operator,
+                notes=request.notes or "批量确认并发布",
+            )
+            published.append(result)
+            # 关键修复：每次成功发布后立即提交事务，避免后续失败时回滚已完成的发布
+            await session.commit()
+        except (LookupError, RuntimeError, ValueError) as exc:
+            await session.rollback()
+            failed.append({"id": candidate_id, "reason": str(exc)})
+        except Exception as exc:
+            await session.rollback()
+            logger.exception("批量发布技术详情失败: candidate_id=%s", candidate_id)
+            failed.append({"id": candidate_id, "reason": f"发布失败: {type(exc).__name__}"})
+
+    return {
+        "requested_count": len(candidate_ids),
+        "published_count": len(published),
+        "skipped_count": len(skipped),
+        "failed_count": len(failed),
+        "published": published,
+        "skipped": skipped,
+        "failed": failed,
+    }
+
+
+@router.get("/technical-detail-publications")
+async def list_technical_detail_publications(
+    status: Optional[str] = Query(None, pattern="^(published|rolled_back)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(_get_session),
+):
+    """查询官网发布和回滚记录。"""
+    where_sql = "status = :status" if status else "1=1"
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if status:
+        params["status"] = status
+    total = (
+        await session.execute(
+            text(f"SELECT COUNT(*) FROM technical_detail_publications WHERE {where_sql}"),
+            params,
+        )
+    ).scalar_one()
+    rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT id, candidate_id, target_item_id, target_item_code,
+                       after_json, published_by, publish_notes, published_at,
+                       status, rolled_back_by, rollback_reason, rolled_back_at
+                FROM technical_detail_publications
+                WHERE {where_sql}
+                ORDER BY published_at DESC, id DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            params,
+        )
+    ).mappings().all()
+    return {"total": total, "limit": limit, "offset": offset, "items": [dict(row) for row in rows]}
+
+
+@router.post("/technical-detail-publications/{publication_id}/rollback")
+async def rollback_technical_detail_publication(
+    publication_id: int,
+    request: TechnicalDetailRollbackRequest,
+    session: AsyncSession = Depends(_get_session),
+):
+    """回滚一次官网发布；若正式字段已被再次编辑则拒绝自动回滚。"""
+    from ..agent.technical_detail_completion import TechnicalDetailCompletionAgent
+
+    try:
+        return await TechnicalDetailCompletionAgent(session).rollback_publication(
+            publication_id,
+            operator=request.operator,
+            reason=request.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
