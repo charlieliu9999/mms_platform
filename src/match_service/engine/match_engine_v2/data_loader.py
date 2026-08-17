@@ -186,12 +186,20 @@ class RuleDataLoader:
         logger.info(f"[RuleDataLoader] 加载消歧规则: {len(self.df_body_disamb)} 条")
 
     async def _load_standard_table(self, conn):
-        """加载标准项目表（B-08修复：统一从 standard_check_items 加载）"""
+        """加载标准项目表（B-08修复：统一从 standard_check_items 加载）
+
+        Phase 1 修复：CT/MR/DR 只加载 V3.8.2 标准库用于匹配，
+        V4.0.0 仅供显示使用，不参与标准匹配，避免 standard_data_conflict。
+        同时只加载带星号(*)的标准项，因为 V3.8.2 内部也存在重复编码。
+        """
         result = await conn.execute(text(
             "SELECT modality, body_part_l3, scan_method, post_processing, "
             "position_name, position_code, device_type_name, "
             "version, item_code, item_name "
-            "FROM standard_check_items WHERE is_active = true"
+            "FROM standard_check_items "
+            "WHERE is_active = true "
+            "  AND version = 'V3.8.2' "
+            "  AND item_name LIKE '* %'"
         ))
         rows = result.fetchall()
 
