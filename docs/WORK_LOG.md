@@ -24,3 +24,10 @@
   - 允许：5类指定文件（工作日志、bug追踪、技术文档、openwiki）
   - 详见：docs/FILE_PRODUCTION_RULES.md
   - 已写入记忆系统
+
+- **Phase 1: 修复 standard_data_conflict（完成）**
+  - 问题定位：引擎同时加载 V3.8.2 和 V4.0.0 两套标准库，导致438个冲突
+  - 解决方案：修改 data_loader.py，只加载 `version='V3.8.2' AND item_name LIKE '* %'`
+  - 实际效果：匹配率 74.2% → **82%** (+7.8百分点，挽回349项)
+  - 剩余未匹配：1174 → **825项**
+  - 提交：commit d753a6f
