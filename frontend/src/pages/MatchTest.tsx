@@ -10,7 +10,7 @@ import {
 import {
   matchAPI, adminAPI, MatchResult, ProcedureItem, ProcedureMatchResult,
 } from '../services/matchService';
-import UnmatchedWorkbench from './UnmatchedWorkbench';
+
 
 // ─── 常量 ────────────────────────────────────────────────────────────────
 const MODALITY_OPTIONS = ['CT', 'MR', 'US', 'DR', 'RF', 'MG', 'SPECT', 'DSA', 'PET/CT', 'PET/MR', 'OCT'];
@@ -213,7 +213,6 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  const [wbKey, setWbKey] = useState(0);
 
   const loadItems = useCallback(async () => {
     setItemsLoading(true);
@@ -270,7 +269,6 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
       const r = res.results?.[0];
       if (r) {
         setMatchResults((prev) => ({ ...prev, [r.procedure_id]: r }));
-        setWbKey((k) => k + 1);
       }
     } catch {
       message.error('匹配失败');
@@ -299,7 +297,6 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
       }
       message.success(`匹配完成：命中 ${matched} 项，未匹配 ${unmatched} 项`);
       await loadItems();
-      setWbKey((k) => k + 1);
     } catch {
       message.error('批量匹配中断，已保留已完成部分');
     } finally {
@@ -567,7 +564,6 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
         items={[
           { key: 'items', label: '检查项目匹配', children: itemsPanel },
           { key: 'custom', label: '自定义测试', children: <SingleMatchPanel /> },
-          { key: 'unmatched', label: '未匹配分析', children: <UnmatchedWorkbench key={wbKey} /> },
         ]}
       />
     </div>

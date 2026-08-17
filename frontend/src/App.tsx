@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import MatchTest from './pages/MatchTest';
 import LexiconMgmt from './pages/LexiconMgmt';
 import StandardItems from './pages/StandardItems';
+import TechnicalDetails from './pages/TechnicalDetails';
 import EvaluationDashboard from './pages/Evaluation/Dashboard';
 import CreateTask from './pages/Evaluation/CreateTask';
 import TaskDetail from './pages/Evaluation/TaskDetail';
@@ -100,24 +101,12 @@ const App: React.FC = () => {
                 <Route path="/lexicon" element={<LexiconMgmt />} />
                 <Route path="/standard-items" element={<StandardItems />} />
                 <Route path="/check-standard-items" element={<StandardItems />} />
+                <Route path="/technical-details" element={<TechnicalDetails />} />
                 {/* 未匹配工作台已并入匹配测试中心，此路由直达其"未匹配分析"页签 */}
                 <Route path="/unmatched" element={<MatchTest initialTab="unmatched" />} />
                 <Route path="/evaluation" element={<EvaluationDashboard />} />
                 <Route path="/evaluation/create" element={<CreateTask />} />
                 <Route path="/evaluation/tasks/:taskId" element={<TaskDetail />} />
-
-                <Route path="/agent" element={
-                  <div className="text-center py-24 space-y-2">
-                    <h3 className="text-lg font-medium text-text-secondary">AI 智能分析助手</h3>
-                    <p className="text-sm text-text-secondary">此模块正在打磨中，敬请期待规则优化建议与智能歧义诊断能力</p>
-                  </div>
-                } />
-                <Route path="/history" element={
-                  <div className="text-center py-24 space-y-2">
-                    <h3 className="text-lg font-medium text-text-secondary">版本变更日志</h3>
-                    <p className="text-sm text-text-secondary">规则引擎历史快照与词库版本追溯面板开发中</p>
-                  </div>
-                } />
               </Routes>
             </Content>
           </Layout>

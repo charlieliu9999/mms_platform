@@ -5,11 +5,9 @@ import {
   SearchOutlined,
   DatabaseOutlined,
   CheckSquareOutlined,
-  ExclamationCircleOutlined,
-  RobotOutlined,
-  HistoryOutlined,
   MedicineBoxOutlined,
   ExperimentOutlined,
+  FileProtectOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -41,32 +39,29 @@ const Sidebar: React.FC = () => {
       label: '标准项目',
     },
     {
-      key: '/unmatched',
-      icon: <ExclamationCircleOutlined />,
-      label: '未匹配工作台',
+      key: '/technical-details',
+      icon: <FileProtectOutlined />,
+      label: '技术细节管理',
     },
     {
       key: '/evaluation',
       icon: <ExperimentOutlined />,
       label: '评测系统',
-    },
-    {
-      key: '/agent',
-      icon: <RobotOutlined />,
-      label: 'AI 建议',
-    },
-    {
-      key: '/history',
-      icon: <HistoryOutlined />,
-      label: '版本历史',
+      children: [
+        {
+          key: '/evaluation',
+          label: '评测任务',
+        },
+      ],
     },
   ];
 
   const selectedKey = location.pathname === '/check-standard-items'
     ? '/standard-items'
-    : location.pathname.startsWith('/evaluation')
-    ? '/evaluation'
     : location.pathname;
+
+  // 处理子菜单的展开
+  const defaultOpenKeys = location.pathname.startsWith('/evaluation') ? ['/evaluation'] : [];
 
   return (
     <Sider
@@ -86,6 +81,7 @@ const Sidebar: React.FC = () => {
         <Menu
           mode="inline"
           selectedKeys={[selectedKey]}
+          defaultOpenKeys={defaultOpenKeys}
           items={menuItems}
           onClick={({ key }) => navigate(key)}
           className="border-r-0 font-semibold text-xs space-y-1 bg-transparent"

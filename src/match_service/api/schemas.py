@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class MatchRequest(BaseModel):
-    name: Optional[str] = Field(default=None, description="检查项目原始文本")
-    text: Optional[str] = Field(default=None, description="检查项目原始文本（name 的别名，兼容历史调用方）")
+    name: Optional[str] = Field(default=None, max_length=500, description="检查项目原始文本")
+    text: Optional[str] = Field(default=None, max_length=500, description="检查项目原始文本（name 的别名，兼容历史调用方）")
     modality: str = Field(..., description="影像模态 (CT/MR/DR/US/SPECT/PET/CT 等)")
     version: str = Field(default="V3.8.2", description="规则版本")
 
@@ -19,9 +19,9 @@ class MatchRequest(BaseModel):
 
 
 class BatchItem(BaseModel):
-    key: Optional[str] = Field(default=None, description="业务唯一标识（缺省时用 name 填充）")
-    name: Optional[str] = Field(default=None, description="检查项目原始文本")
-    text: Optional[str] = Field(default=None, description="检查项目原始文本（name 的别名）")
+    key: Optional[str] = Field(default=None, max_length=500, description="业务唯一标识（缺省时用 name 填充）")
+    name: Optional[str] = Field(default=None, max_length=500, description="检查项目原始文本")
+    text: Optional[str] = Field(default=None, max_length=500, description="检查项目原始文本（name 的别名）")
     modality: str = Field(..., description="影像模态")
 
     @model_validator(mode="after")

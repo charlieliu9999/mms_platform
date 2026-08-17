@@ -71,6 +71,144 @@ export interface MedicalDictItem {
   updated_at?: string;
 }
 
+export type TechnicalDetailStatus =
+  | 'pending_review'
+  | 'approved'
+  | 'rejected'
+  | 'applied'
+  | 'superseded';
+
+export interface TechnicalDetailSourceRef {
+  item_id: number;
+  item_code: string;
+  item_name: string;
+  role: string;
+}
+
+export interface TechnicalDetailConflict {
+  field: string;
+  resolution: string;
+  plain_value?: string;
+  enhanced_value?: string;
+}
+
+export interface TechnicalDetailCandidateSummary {
+  id: number;
+  target_item_id: number;
+  target_item_code: string;
+  target_item_name: string;
+  target_version: string;
+  modality: string;
+  generation_method: string;
+  confidence: number;
+  conflicts_json: TechnicalDetailConflict[];
+  source_item_ids_json: number[];
+  algorithm_version: string;
+  rationale: string;
+  status: TechnicalDetailStatus;
+  reviewer?: string;
+  reviewed_at?: string;
+  has_manual_edits: boolean;
+  last_edited_by?: string;
+  last_edited_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TechnicalDetailRevision {
+  id: number;
+  revision_no: number;
+  before_json: Record<string, string>;
+  after_json: Record<string, string>;
+  edited_by: string;
+  edit_notes?: string;
+  created_at: string;
+}
+
+export interface TechnicalDetailPublication {
+  id: number;
+  candidate_id?: number;
+  target_item_code?: string;
+  before_json?: Record<string, string | null>;
+  after_json: Record<string, string>;
+  published_by: string;
+  publish_notes?: string;
+  published_at: string;
+  status: 'published' | 'rolled_back';
+  rolled_back_by?: string;
+  rollback_reason?: string;
+  rolled_back_at?: string;
+}
+
+export interface TechnicalDetailCandidate extends TechnicalDetailCandidateSummary {
+  candidate_json: Record<string, string>;
+  field_sources_json: Record<string, TechnicalDetailSourceRef[]>;
+  source_fingerprint: string;
+  review_notes?: string;
+  revisions: TechnicalDetailRevision[];
+  publications: TechnicalDetailPublication[];
+}
+
+export interface TechnicalDetailProvenance {
+  id: number;
+  source_kind: 'historical_import' | 'rule_fusion' | 'evaluation_import';
+  source_system: string;
+  source_table: string;
+  source_record_key?: string;
+  import_batch: string;
+  match_method: string;
+  field_names: string[];
+  source_notes?: string;
+  publication_id?: number;
+  created_at: string;
+  source_label: string;
+}
+
+export interface TechnicalDetailLibraryItem {
+  id: number;
+  item_code: string;
+  item_name: string;
+  modality: string;
+  version: string;
+  scan_method?: string;
+  post_processing?: string;
+  is_active: boolean;
+  body_position?: string;
+  scan_scope?: string;
+  contrast_agent?: string;
+  image_region?: string;
+  image_focus?: string;
+  scan_method_detail?: string;
+  scan_param?: string;
+  coil?: string;
+  base_sequence?: string;
+  compose_sequence?: string;
+  clinical_indication?: string;
+  clinical_significance?: string;
+  organs?: string;
+  anatomical_structure?: string;
+  technical_notes?: string;
+  image_grade?: string;
+  image_score?: number;
+  sources: TechnicalDetailProvenance[];
+}
+
+export interface TechnicalDetailLibraryStats {
+  total: number;
+  active_total: number;
+  ct_total: number;
+  mr_total: number;
+  sources: { source_kind: string; source_table: string; count: number }[];
+}
+
+export interface TechnicalDetailStats {
+  total: number;
+  by_status: Partial<Record<TechnicalDetailStatus, number>>;
+  by_method: Record<string, number>;
+  conflict_count: number;
+  active_publication_count: number;
+}
+
 export interface StatsData {
   total_medical_dict: number;
   total_phrase_map: number;
@@ -231,6 +369,97 @@ export const adminAPI = {
   importAllStandardItems: (): Promise<any> =>
     apiClient.post('/admin/standard-items/import-all'),
 
+  // 正式技术参数库及来源
+  getTechnicalDetailLibraryStats: (): Promise<TechnicalDetailLibraryStats> =>
+    apiClient.get('/admin/technical-detail-library/stats'),
+
+  getTechnicalDetailLibrary: (params?: {
+    modality?: string;
+    source_kind?: 'historical_import' | 'rule_fusion' | 'evaluation_import';
+    search?: string;
+    is_active?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ total: number; items: TechnicalDetailLibraryItem[] }> =>
+    apiClient.get('/admin/technical-detail-library', { params }),
+
+  getTechnicalDetailLibraryItem: (id: number): Promise<TechnicalDetailLibraryItem> =>
+    apiClient.get(`/admin/technical-detail-library/${id}`),
+
+  // 技术详情构建、审核与官网发布
+  getTechnicalDetailStats: (): Promise<TechnicalDetailStats> =>
+    apiClient.get('/admin/technical-detail-candidates/stats'),
+
+  getTechnicalDetailCandidates: (params?: {
+    status?: TechnicalDetailStatus;
+    modality?: string;
+    search?: string;
+    has_conflicts?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ total: number; items: TechnicalDetailCandidateSummary[] }> =>
+    apiClient.get('/admin/technical-detail-candidates', { params }),
+
+  getTechnicalDetailCandidate: (id: number): Promise<TechnicalDetailCandidate> =>
+    apiClient.get(`/admin/technical-detail-candidates/${id}`),
+
+  generateTechnicalDetailCandidates: (data: {
+    version: string;
+    modality: string;
+    item_code?: string;
+    limit?: number;
+    persist: boolean;
+  }): Promise<any> =>
+    apiClient.post('/admin/technical-detail-candidates/generate', data, { timeout: 180000 }),
+
+  editTechnicalDetailCandidate: (
+    id: number,
+    data: { candidate_fields: Record<string, string>; editor: string; notes?: string },
+  ): Promise<TechnicalDetailCandidate> =>
+    apiClient.put(`/admin/technical-detail-candidates/${id}`, data),
+
+  reviewTechnicalDetailCandidate: (
+    id: number,
+    data: { decision: 'approved' | 'rejected'; reviewer: string; notes?: string },
+  ): Promise<{ id: number; status: TechnicalDetailStatus }> =>
+    apiClient.post(`/admin/technical-detail-candidates/${id}/review`, data),
+
+  publishTechnicalDetailCandidate: (
+    id: number,
+    data: { publisher?: string; notes?: string },
+  ): Promise<{ publication_id: number; target_item_code: string; published_fields: string[]; status: string }> =>
+    apiClient.post(`/admin/technical-detail-candidates/${id}/publish`, data),
+
+  bulkReviewAndPublishTechnicalDetails: (data: {
+    candidate_ids?: number[];
+    select_all?: boolean;
+    status?: TechnicalDetailStatus;
+    modality?: string;
+    search?: string;
+    has_conflicts?: boolean;
+    operator?: string;
+    notes?: string;
+  }): Promise<{
+    requested_count: number;
+    published_count: number;
+    skipped_count: number;
+    failed_count: number;
+    failed: { id: number; reason: string }[];
+  }> =>
+    apiClient.post('/admin/technical-detail-bulk/review-and-publish', data, { timeout: 300000 }),
+
+  rollbackTechnicalDetailPublication: (
+    id: number,
+    data: { operator: string; reason: string },
+  ): Promise<{ publication_id: number; target_item_code: string; status: string }> =>
+    apiClient.post(`/admin/technical-detail-publications/${id}/rollback`, data),
+
+  getTechnicalDetailPublications: (params?: {
+    status?: 'published' | 'rolled_back';
+    limit?: number;
+    offset?: number;
+  }): Promise<{ total: number; items: TechnicalDetailPublication[] }> =>
+    apiClient.get('/admin/technical-detail-publications', { params }),
 
   // 未匹配工作台
   getUnmatchedSummary: (): Promise<any> =>

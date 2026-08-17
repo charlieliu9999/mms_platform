@@ -2,6 +2,37 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
+---
+
+## ⚠️ 最高优先级：项目核心原则（必读）
+
+**在进行任何开发工作前，必须先阅读**: [`PROJECT_CORE_PRINCIPLES.md`](./PROJECT_CORE_PRINCIPLES.md)
+
+**核心要求摘要**:
+1. ✅ **唯一评价指标**: 4555个ACR项目全量匹配率
+2. ✅ **未匹配比例必须降低**: 每次优化必须减少未匹配项
+3. ✅ **零破坏原则**: 任何修改必须先运行全量回归测试，不得出现"修好A破坏B"
+4. ✅ **整体匹配率提升**: 全局优化，不允许牺牲某个模态优化另一个
+5. ✅ **系统化分析**: 一个一个项目分析，沉淀词典/算法/文档
+
+**评估命令**:
+```bash
+# 任何修改前后都必须运行
+poetry run python scripts/evaluate_acr_4555.py
+
+# 或使用快速脚本
+./scripts/quick_eval.sh eval "阶段名" "描述"
+
+# 生成可视化报告
+./scripts/quick_eval.sh report
+```
+
+**评估系统完整指南**: [`docs/EVALUATION_SYSTEM_GUIDE.md`](./docs/EVALUATION_SYSTEM_GUIDE.md)
+
+**违反核心原则的代码将被回滚。**
+
+---
+
 ## 项目概述
 
 MMS (Medical Match Service) - 医学影像检查项目标准化匹配服务。独立的 FastAPI 后端 + React 前端，提供三层匹配架构（映射库→算法引擎→AI Agent）。
@@ -102,7 +133,8 @@ src/match_service/
 │
 ├── agent/               # Phase F - AI Agent
 │   ├── reviewer.py      # 未匹配项目分析
-│   └── suggestion.py    # 优化建议数据模型
+│   ├── suggestion.py    # 优化建议数据模型
+│   └── technical_detail_completion.py # 技术详情候选、审核、发布与回滚
 │
 ├── core/
 │   ├── engine_holder.py # 引擎单例管理（启动时加载词表）
@@ -119,6 +151,8 @@ frontend/src/
 │   ├── MatchTest.tsx         # 单项目匹配测试工具
 │   ├── StandardItems.tsx     # 标准项目浏览
 │   ├── LexiconMgmt.tsx       # 词库 CRUD
+│   ├── TechnicalDetailWorkbench.tsx # 技术详情构建与官网发布
+│   ├── TechnicalDetailLibrary.tsx # 正式技术参数与来源追溯
 │   └── UnmatchedWorkbench.tsx # AI 建议审批
 │
 ├── services/
@@ -224,6 +258,12 @@ docker-compose up -d  # 启动完整栈（后端+前端+PostgreSQL+Redis）
 
 ### 词表数据加载
 词表数据在 Alembic 迁移中加载（`migrations/versions/*_load_finalized_lexicon.py`），**不是**应用启动时加载。首次部署务必运行 `alembic upgrade head`。
+
+### 技术详情发布
+- 技术详情 Agent 只能先写 `technical_detail_candidates`，不得直接覆盖 `standard_check_items`。
+- 批量重新构建不得覆盖 `has_manual_edits=true` 的候选。
+- 只有 `approved` 候选可以发布；发布必须保存 before/after 快照并支持冲突保护回滚。
+- 历史导入和规则发布的字段来源统一记录在 `technical_detail_provenance`。
 
 ### 版本指纹
 `core/rule_version.py` 计算词表内容的 SHA-256 指纹，用于：
