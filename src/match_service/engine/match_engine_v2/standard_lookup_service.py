@@ -62,6 +62,9 @@ BODY_HIERARCHY_MAP = {
     "双髋关节": "四肢及关节",
     "双膝关节": "四肢及关节",
     "双踝关节": "四肢及关节",
+    # 脊髓 → 全脊柱（"脊柱脊髓"/"脑部及脊髓"等输入，脊髓无独立标准项，
+    # 回退到全脊柱项；MR全脊柱(平扫/增强/平扫+增强) 均存在）
+    "脊髓": "全脊柱",
 }
 
 # Phase 2: 扫描方式模糊映射（特殊序列→基础扫描）
@@ -110,6 +113,40 @@ GENERIC_TERM_PATTERNS = {
     "脊柱": "%脊柱%",
     "椎体": "%椎%",
 }
+
+# Phase P: 血管部位 → 标准库部位映射（"部位+血管"输入命中具体动脉/静脉标准项）
+VESSEL_BODY_MAP = {
+    "小肠血管": "肠系膜上动脉",
+    "肝脏血管": "上腹部动脉",
+    "肝血管": "上腹部动脉",
+    "大血管": "主动脉",
+}
+
+# Phase P: 血管部位通用回退集合（无独立标准项时回退到通用动脉/静脉项，degraded）
+VESSEL_GENERIC_FALLBACK = frozenset({
+    "上腔静脉", "全腹部动脉", "脊髓血管", "脊髓动脉", "胸腰段脊髓动脉",
+    "颈段脊髓动脉", "胸段脊髓动脉", "腰段脊髓动脉",
+    "全脑血管", "头部血管", "颅内血管", "动静脉", "血管",
+})
+
+# Phase P: 区域部位 + 血管扫描 → 通用血管项回退（如 盆腔+CTA → CT动脉血管成像(CTA)）
+VESSEL_REGION_FALLBACK = frozenset({
+    "盆腔", "腹部", "全腹部", "腹盆", "胸部", "四肢", "外周",
+    "头颈部", "颈部", "全身", "下肢", "上肢",
+})
+
+# Phase P: 动静脉合并扫描分解（组合扫描 → 动脉+静脉两路查询）
+VESSEL_COMBINED_SCAN = {
+    "动静脉血管成像(CTA+CTV)": ["动脉血管成像(CTA)", "静脉血管成像(CTV)"],
+    "动静脉血管成像(MRA+MRV)": ["动脉血管成像(MRA)", "静脉血管成像(MRV)"],
+    "动静脉血管增强成像(CE-MRA+CE-MRV)": [
+        "动脉血管增强成像(CE-MRA)", "静脉血管增强成像(CE-MRV)"],
+}
+
+# Phase P: 部位无关扫描（标准项部位为"非指定部位"，任意部位输入均命中，degraded）
+BODY_AGNOSTIC_SCANS = frozenset({
+    "磁共振弹性成像(MRE)",
+})
 
 
 class StandardLookupService:
@@ -337,12 +374,20 @@ class StandardLookupService:
                     position_vals += node.std_names[i].split('|')
                 position_vals = sorted(set(position_vals))
 
+            # DR 扫描方式值（无体位标准项回退用，如 DR骨密度测定）
+            scan_vals = []
+            if modality == 'DR':
+                for i in node.pos_dict.get('scan', []):
+                    scan_vals += node.std_names[i].split('|')
+                scan_vals = sorted(set(scan_vals))
+
             candidates, degraded = self._query_standard_table(
                 df_std, modality, bodies, process_type,
-                process_vals, post_vals, position_vals)
+                process_vals, post_vals, position_vals, scan_vals)
             if degraded:
                 node.degraded = True
 
+            candidate_hits = 0
             for _, row in candidates.iterrows():
                 name = row['checkitem_name']
                 code = row['checkitem_code']
@@ -364,10 +409,16 @@ class StandardLookupService:
                     continue
                 
                 if name in dup_set:
+                    candidate_hits += 1
                     continue
                 dup_set.add(name)
+                candidate_hits += 1
                 node.standard_check_name.append(name)
                 node.standard_check_code.append(code)
+            # 该节点所有候选均被其他节点去重覆盖（如"颞骨及头颈部血管"的
+            # 头颈部动脉+三维重建影子节点）：语义已由组合结果覆盖，不算未匹配。
+            if not node.standard_check_name and candidate_hits:
+                node.dup_only = True
             
             # 修复4: CT/MR后处理项补充基础扫描
             # 当匹配到后处理项（三维重建/MPR等）且有明确部位时，
@@ -386,12 +437,17 @@ class StandardLookupService:
                               bodies: List[str], process_type: str,
                               process_vals: List[str],
                               post_vals: List[str],
-                              position_vals: List[str] = None
+                              position_vals: List[str] = None,
+                              scan_vals: List[str] = None
                               ) -> Tuple[pd.DataFrame, bool]:
         """返回 (候选 DataFrame, 是否走了降级查询分支)"""
+        scan_vals = scan_vals or []
         if not bodies:
             if modality in ('CT', 'MR') and (process_vals or post_vals):
                 return self._query_ct_mr(df, bodies, process_vals, post_vals)
+            # DR 无部位输入：按扫描方式回退（覆盖无体位标准项，如 DR骨密度测定）
+            if modality == 'DR' and scan_vals:
+                return self._query_dr_scan(df, scan_vals)
             return pd.DataFrame(), False
 
         if modality in ('CT', 'MR'):
@@ -400,8 +456,8 @@ class StandardLookupService:
             return self._query_rf_mg(
                 df, bodies, process_vals, modality, position_vals)
         elif modality == 'DR':
-            # DR 使用 position_vals，不是 process_vals
-            return self._query_dr(df, bodies, position_vals or [])
+            # DR 使用 position_vals，不是 process_vals；scan_vals 作无体位回退
+            return self._query_dr(df, bodies, position_vals or [], scan_vals)
         else:
             return pd.DataFrame(), False
 
@@ -413,6 +469,33 @@ class StandardLookupService:
 
         # P2修复：扩展部位等价名称（盆腔 ↔ 盆腔及盆底结构）
         bodies_expanded = self._expand_body_equivalents(bodies) if bodies else []
+
+        # Phase P: 血管部位映射（小肠血管→肠系膜上动脉、肝脏血管→上腹部动脉等）
+        mapped_bodies = []
+        for b in bodies_expanded:
+            mapped_bodies.append(VESSEL_BODY_MAP.get(b, b))
+        bodies_expanded = list(dict.fromkeys(mapped_bodies)) or bodies_expanded
+
+        # Phase P: 动静脉合并扫描分解（动静脉血管成像(CTA+CTV) → 动脉/静脉两路）
+        decomposed_scan = []
+        for s in scan:
+            decomposed_scan.extend(VESSEL_COMBINED_SCAN.get(s, [s]))
+        scan = list(dict.fromkeys(decomposed_scan))
+
+        # Phase P: 部位无关扫描（磁共振弹性成像(MRE) 等 → 非指定部位降级命中）
+        agnostic_scan = [s for s in scan if s in BODY_AGNOSTIC_SCANS]
+        if agnostic_scan:
+            mask = (
+                df['three_level_name'].isin(['非指定部位', '无部位']) &
+                df['scan_name'].isin(agnostic_scan) &
+                ((df['post_processing_name'] == '') | df['post_processing_name'].isna())
+            )
+            hit = df[mask]
+            if not hit.empty:
+                degraded = True
+                results.append(hit)
+            # 部位无关扫描不再参与常规部位查询，避免 body 不匹配残留
+            scan = [s for s in scan if s not in BODY_AGNOSTIC_SCANS]
 
         if post:
             mask = (
@@ -558,6 +641,35 @@ class StandardLookupService:
                     results.append(hit)
                     has_match = True
 
+        # Phase P: 血管部位通用回退（具体血管部位/区域无标准项时回退通用动脉/静脉项）。
+        # 条件：扫描方式是血管成像，且当前结果中没有命中任何血管扫描标准项
+        # （即使已命中后处理项如"三维重建"，仍补充通用血管项，避免组合项目缺血管件）。
+        vessel_scan = [
+            s for s in scan
+            if any(k in s for k in ('血管成像', '血管增强'))
+        ]
+        is_vessel_body = any(
+            b in VESSEL_GENERIC_FALLBACK
+            or b.endswith(('动脉', '静脉', '血管'))
+            or b in VESSEL_REGION_FALLBACK
+            for b in bodies_expanded
+        )
+        if is_vessel_body and vessel_scan:
+            has_vessel_match = any(
+                not r.empty and r['scan_name'].isin(vessel_scan).any()
+                for r in results
+            )
+            if not has_vessel_match:
+                mask = (
+                    df['three_level_name'].isin(['非指定部位', '无部位']) &
+                    df['scan_name'].isin(vessel_scan) &
+                    ((df['post_processing_name'] == '') | df['post_processing_name'].isna())
+                )
+                hit = df[mask]
+                if not hit.empty:
+                    degraded = True
+                    results.append(hit)
+
         if results:
             combined = pd.concat(results).drop_duplicates(subset=['checkitem_name'])
             return combined, degraded
@@ -634,13 +746,44 @@ class StandardLookupService:
             return combined, degraded
         return pd.DataFrame(), False
 
-    def _query_dr(self, df: pd.DataFrame, bodies: List[str],
-                  positions: List[str]) -> Tuple[pd.DataFrame, bool]:
-        if not positions:
-            return pd.DataFrame(), False
+    def _query_dr_scan(self, df: pd.DataFrame,
+                       scan: List[str]) -> Tuple[pd.DataFrame, bool]:
+        """DR 无体位/无部位输入：按扫描方式回退到无体位标准项。
 
+        覆盖 DR骨密度测定 这类没有 position_name 的标准项（否则永远不可达）。
+        """
+        if not scan:
+            return pd.DataFrame(), False
+        mask = (
+            (df['position_name'].isna() | (df['position_name'] == '')) &
+            df['scan_name'].isin(scan)
+        )
+        result = df[mask]
+        return result.drop_duplicates(subset=['checkitem_name']), True
+
+    def _query_dr(self, df: pd.DataFrame, bodies: List[str],
+                  positions: List[str],
+                  scan: List[str] = None) -> Tuple[pd.DataFrame, bool]:
+        scan = scan or []
+        # 设备类型不作为体位参与匹配（如 "移动DR胸部" 的 移动DR 是设备）
+        positions = [p for p in positions if p not in ('移动DR', 'DR')]
         # P2修复：扩展部位等价名称
         bodies_expanded = self._expand_body_equivalents(bodies) if bodies else []
+
+        if not positions:
+            # 无体位 + 有部位 → 匹配无体位标准项（degraded，如 移动DR胸部）
+            if bodies:
+                mask = (
+                    df['three_level_name'].isin(bodies_expanded) &
+                    (df['position_name'].isna() | (df['position_name'] == ''))
+                )
+                result = df[mask]
+                if not result.empty:
+                    return result.drop_duplicates(subset=['checkitem_name']), True
+            # 无体位 + 无部位 → 按扫描方式回退（如 DR骨密度测定）
+            if scan:
+                return self._query_dr_scan(df, scan)
+            return pd.DataFrame(), False
 
         all_positions = set(positions)
         for pos in positions:
@@ -704,5 +847,28 @@ class StandardLookupService:
                 result = df[mask]
                 if not result.empty:
                     degraded = True
+
+        if result.empty and bodies:
+            # 左右侧扩展回退 → 降级
+            # 输入无左右侧（或默认双侧）时，标准库只有单侧项（如 DR左/右腕关节[骨龄]）
+            laterality_bodies = []
+            for b in bodies_expanded:
+                if b.startswith('双') and len(b) > 1:
+                    laterality_bodies.append('左' + b[1:])  # 双腕部 → 左腕部
+                    laterality_bodies.append('右' + b[1:])  # 双腕部 → 右腕部
+                elif not b.startswith(('左', '右')):
+                    laterality_bodies.append(b)
+            if laterality_bodies:
+                mask = (
+                    df['three_level_name'].isin(laterality_bodies) &
+                    df['position_name'].isin(all_positions_list)
+                )
+                result = df[mask]
+                if not result.empty:
+                    degraded = True
+
+        if result.empty and scan:
+            # 无体位标准项按扫描方式回退（degraded）
+            return self._query_dr_scan(df, scan)
 
         return result.drop_duplicates(subset=['checkitem_name']), degraded

@@ -432,6 +432,21 @@ class DisambiguationService:
             body_idx = node.pos_dict['body'][0]
             body = node.std_names[body_idx]
 
+            # 及-连接复合部位守卫："颞骨及头颈部血管" 中颞骨节点自身非血管，
+            # 血管关键词属于并列兄弟节点，不得把颞骨的"增强"归一化成 CTA
+            # （否则 CT颞骨(平扫+增强) 等非血管标准永远无法命中）。
+            own_bodies = [node.std_names[i] for i in node.pos_dict.get('body', [])]
+            own_scans = [node.std_names[i] for i in node.pos_dict.get('scan', [])]
+            own_vessel = any(
+                any(k in b for k in ('动脉', '静脉', '血管', '冠脉', '主动脉'))
+                for b in own_bodies
+            ) or any(
+                any(k in s for k in ('CTA', 'CTV', 'MRA', 'MRV', '血管成像', '血管增强'))
+                for s in own_scans
+            )
+            if not own_vessel and '及' in raw:
+                continue
+
             # 非血管造影关键词白名单（排除）
             # 这些造影类型不应该被识别为血管成像
             NON_VASCULAR_CONTRAST = {
@@ -799,7 +814,12 @@ class DisambiguationService:
         if len(body_remap) == 1:
             result = []
             dst_body_arr = body_remap['dst_word'].iloc[0].split('_')
-            for sub_body in dst_body_arr:
+            # 多候选（如 "胸腹主动脉_胸部_全腹部"）是同一检查的备选部位，
+            # 而非多个并列子检查：只保留血管本体候选，避免"选择"式多节点
+            # 导致部分命中被判 ambiguous（组合语义见 orchestrator E3）。
+            vessel_bodies = [b for b in dst_body_arr if '脉' in b]
+            keep_bodies = vessel_bodies or dst_body_arr[:1]
+            for sub_body in keep_bodies:
                 if '脉' in sub_body:
                     msg, _, new_process = self._db_add_process_for_vessel(
                         body, '', modality, version)

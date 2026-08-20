@@ -598,8 +598,12 @@ class MatchEngineOrchestrator:
         # - partial: 任一子项的处理方式为默认推断（部位命中）
         # - exact: 全部子项部位+处理方式显式精确命中
         has_result = match_info['num_standard'] > 0
+        # dup_only 节点：候选全部被其他节点去重覆盖（组合项目中语义已覆盖的
+        # 影子节点），不计入"有实体但未匹配"，避免组合项目被误判 ambiguous。
         has_unmatched_node = any(
-            node.entitys and not node.standard_check_name for node in childrens
+            node.entitys and not node.standard_check_name
+            and not getattr(node, 'dup_only', False)
+            for node in childrens
         )
         # 是否解析出有效医学实体（落入 body/scan/post/position 维度）：
         # 供 backend 区分 lexicon_gap（无医学实体，词库未覆盖）与
@@ -607,21 +611,35 @@ class MatchEngineOrchestrator:
         has_entity = any(
             node.pos_dict.get(k) for node in childrens for k in _MEDICAL_POS
         )
+        # 组合项目：输入被拆分为多个子项（如 "MR胸主动脉MRA,MR髂动脉MRA"）。
+        # 组合语义 = 各子项分别命中自己的标准项（结果含多个标准），
+        # 而不是在多个候选里"选一个"——因此部分子项真缺标准时，
+        # 整条应按降级组合处理，而不是歧义失败。
+        is_compound = len(record_split) > 1
         if not has_result:
             tier = 'none'
+            compound_reason = ''
         elif has_unmatched_node:
             # 单候选+唯一子项时，优先返回exact/degraded（技术描述规范化后无残留）
             if (match_info['num_standard'] == 1 and len(childrens) == 1 
                 and not any(node.degraded for node in childrens)):
                 tier = 'exact'
+                compound_reason = ''
+            elif is_compound:
+                tier = 'degraded'
+                compound_reason = 'compound_item_incomplete'
             else:
                 tier = 'ambiguous'
+                compound_reason = ''
         elif any(node.degraded for node in childrens):
             tier = 'degraded'
+            compound_reason = ''
         elif any(node.fill_default for node in childrens):
             tier = 'partial'
+            compound_reason = ''
         else:
             tier = 'exact'
+            compound_reason = ''
 
         # 处理跨模态子项（组合医嘱拆分出的其他模态子项，递归到 match() 策略分派）
         # 例如 "CT头部平扫;超声心动" 会把 US 子项递归到关键词引擎
@@ -638,14 +656,19 @@ class MatchEngineOrchestrator:
             if match_info['num_standard'] > 0 and sub_tier != 'none':
                 if TIER_CONFIDENCE[sub_tier] < TIER_CONFIDENCE[tier]:
                     tier = sub_tier
+                elif tier == 'none':
+                    # 主模态无命中但跨模态子项命中（如 MR经食管超声心动图 → US 匹配）
+                    tier = sub_tier
             elif sub_tier == 'none' and tier != 'none':
                 # 跨模态子项完全失配 → 整体降为 ambiguous（部分失配）
                 tier = 'ambiguous' if match_info['num_standard'] > 0 else 'none'
 
         match_info['tier'] = tier
         match_info['confidence'] = TIER_CONFIDENCE[tier]
-        # NLP 正常路径无 unmatchable 标记；has_entity 供未匹配原因分类
-        match_info['reason'] = ''
+        # NLP 正常路径无 unmatchable 标记；has_entity 供未匹配原因分类。
+        # 组合项目部分子项失配时标记 compound_item_incomplete（组合语义，
+        # 区别于单项目的多候选歧义）。
+        match_info['reason'] = compound_reason
         match_info['has_entity'] = has_entity
         return match_info
 

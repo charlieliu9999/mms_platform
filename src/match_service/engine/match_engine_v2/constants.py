@@ -31,6 +31,8 @@ SPECIAL_ITEM_MARKERS: Dict[str, str] = {
     '穿刺活检': 'biopsy',
     '靶向穿刺': 'biopsy',
     '活检': 'biopsy',
+    '活组织检查': 'biopsy',  # VABB 真空辅助活组织检查等
+    '真空辅助': 'biopsy',
 
     # 介入治疗（Phase 1 扩展）
     '介入': 'intervention',
@@ -42,12 +44,12 @@ SPECIAL_ITEM_MARKERS: Dict[str, str] = {
     '血管成形': 'intervention',
     '经导管': 'intervention',
     '排粪造影': 'intervention',
-    '声学造影': 'intervention',
 
     # 影像引导
     '引导下': 'image_guided',
     'CT引导': 'image_guided',
     'MR引导': 'image_guided',
+    '消融术': 'intervention',  # 治疗性消融（聚焦超声消融术等）
 
     # 非影像检查（Phase 1 扩展）
     '心电图': 'non_imaging',
@@ -66,6 +68,8 @@ SPECIAL_ITEM_MARKERS: Dict[str, str] = {
     '全景片': 'dental',
     '曲面体层': 'dental',
     '口内': 'dental',
+    '口腔全景': 'dental',   # X线口腔全景(筛查)
+    '口腔临床': 'dental',   # X线口腔临床检查(视诊+触诊)
 
     # 内镜检查
     '乳管镜': 'endoscopy',
@@ -97,6 +101,10 @@ POSITION_FALLBACK: Dict[str, List[str]] = {
     '站立正、侧位': ['站立正、侧位', '正、侧位'],
     '负重正位': ['负重正位', '正位'],
     '负重侧位': ['负重侧位', '侧位'],
+    # 卧位无明确俯/仰时，标准库最接近项为"仰卧正位"（如 DR胸部卧位）
+    '卧位': ['卧位', '仰卧正位'],
+    # 骨龄测定通常取腕关节正位（标准库为 DR左/右腕关节正位[测骨龄]）
+    '测骨龄': ['测骨龄', '正位'],
 }
 
 POSITION_DECOMPOSE: Dict[str, List[str]] = {

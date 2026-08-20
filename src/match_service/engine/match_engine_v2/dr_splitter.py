@@ -86,6 +86,10 @@ class DRSplitter:
 
         # 2. 统一分隔符为逗号
         # 支持：逗号、顿号、分号、竖线、中文句号
+        # 先展开"左|右X"并列表达，避免竖线被直接替换成逗号把"膝关节"丢给右项
+        # （"左|右膝关节" → "左膝关节,右膝关节"，而非 "左,右膝关节"）
+        text = re.sub(r'左[|/]右([一-龥]+)', r'左\1,右\1', text)
+        text = re.sub(r'右[|/]左([一-龥]+)', r'右\1,左\1', text)
         text = text.replace('，', ',').replace('、', ',')
         text = text.replace(';', ',').replace('；', ',')
         text = text.replace('|', ',').replace('。', ',')

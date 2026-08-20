@@ -627,7 +627,74 @@ class USSpectPetMatcher:
         scan = self._extract_us_scan(order_name)
 
         # 3. 查表
-        return self._query_result(self._query_us(body_l2, scan))
+        pairs = self._query_us(body_l2, scan)
+        # 4. 多候选收敛：US 标准库中"经腹/经阴道/经食管"等路径共用同一 bp2，
+        #    会返回多条路径变体（选择式候选）。按输入选最匹配的单个标准项返回
+        #    （不做"选择"式多候选，与项目核心原则一致）。
+        if len(pairs) > 1:
+            pairs = self._select_best_candidate(order_name, pairs)
+            # 仅当输入是"完整检查名"（含扫描方式/路径等限定词）时收敛为精确档；
+            # 裸词（如"超声心动"）不指定具体检查，保持 degraded 待确认。
+            if len(pairs) == 1 and self._has_us_specificity(order_name):
+                self._last_tier = 'exact'  # 多候选已收敛为单候选，恢复精确档
+        return self._query_result(pairs)
+
+    @staticmethod
+    def _has_us_specificity(order_name: str) -> bool:
+        """输入是否指定了具体检查（扫描方式/路径/技术限定词）。
+
+        裸词（"超声心动"）无任何限定 → 视为歧义输入，保持 degraded。
+        """
+        return any(k in order_name for k in (
+            '常规', '三维', '四维', '弹性', '造影', '介入', '床旁', '消融',
+            '多普勒', '彩色', '高频', '经腹', '经阴道', '经直肠', '经食管',
+            '监测', '残余尿', '筛查', 'NT', '负荷', '充盈'))
+
+    @staticmethod
+    def _select_best_candidate(order_name: str,
+                               pairs: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        """从多候选中选择最匹配输入的单个标准项。
+
+        规则：
+        1. 输入含 经腹/经阴道/经直肠/经食管/经会阴 等路径词 → 优先对应路径的标准项
+        2. 否则按名称与输入的字符重合度选最具体项；重合度相同取较短（更通用）项
+        """
+        if not pairs or len(pairs) <= 1:
+            return pairs
+        approach_kws = ('经腹', '经阴道', '经直肠', '经食管', '经会阴', '经肛门')
+        for kw in approach_kws:
+            if kw in order_name:
+                filtered = [p for p in pairs if kw in p[1]]
+                if filtered:
+                    return filtered[:1]
+        input_chars = {c for c in order_name if not c.isspace()}
+        # 变体限定词：候选含输入没有的限定词（早孕期/筛查/负荷/充盈等）应降分，
+        # 输入含有的限定词命中应加分（如"胎儿系统性筛查（三级）四维"选筛查三级项）
+        QUALIFIERS = ('早孕期', 'NT', '筛查', '阶段', '负荷', '充盈', '残余尿', '监测',
+                      '经腹', '经阴道', '经直肠', '经食管', '经会阴', '介入', '床旁',
+                      '造影', '消融', '弹性', '三维', '四维',
+                      # 技术功能测定类限定词（如"经胸超声心动图"不应选"机械运动同步功能"变体）
+                      '功能', '定量', '跟踪', '动力学', '室壁', '左心室', '同步',
+                      '收缩', '舒张', '测定', '彩色', '应变')
+        best = None
+        best_score = -1e9
+        for p in pairs:
+            name = p[1]
+            score = len(input_chars & set(name))
+            for q in QUALIFIERS:
+                in_input = q in order_name
+                in_name = q in name
+                if in_input and in_name:
+                    score += 2
+                elif in_name and not in_input:
+                    score -= 3
+            score -= len(name) * 0.05  # 轻微偏好更短（更通用）项
+            if (score > best_score
+                    or (score == best_score
+                        and (best is None or len(name) < len(best[0][1])))):
+                best = [p]
+                best_score = score
+        return best or pairs[:1]
 
     def _normalize_us_name(self, name: str) -> str:
         """
@@ -689,17 +756,10 @@ class USSpectPetMatcher:
                 self._last_tier = 'degraded'
                 logger.info(f"[US] 扫描方式降级: {scan_method}→常规 (body={body_l2})")
 
-        # 多候选不能标记 exact。候选过多时仍只返回最通用项，但明确降级；
-        # 2-3 个候选也降级，避免未经消歧以 1.0 置信度写缓存。
+        # 多候选不能标记 exact；候选收敛由 _match_us 的 _select_best_candidate
+        # 统一处理（按输入精确选择单个标准项），此处返回全部候选。
         if len(result) > 1:
             self._last_tier = 'degraded'
-        if len(result) > 3:
-            general = result[result['body_part_l3'] == '']
-            if not general.empty:
-                return [(str(general.iloc[0]['item_code']),
-                        str(general.iloc[0]['item_name']))]
-            return [(str(result.iloc[0]['item_code']),
-                    str(result.iloc[0]['item_name']))]
 
         return [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
 

@@ -161,6 +161,22 @@ class MatchDispatcher:
                     inferred = infer_text_modality(standard_name)
                     if inferred:
                         matched_modalities.add(inferred)
+            # 乳腺X线(DR)已被 MG 标准覆盖：显式模态中的 DR 视为已覆盖
+            # （"X线乳腺断层摄影联合US"等联合项目，乳腺X线部分匹配到MG钼靶）
+            if re.search(r"(Xs*线|DR|XR).*(乳腺|乳房|钼靶|断层)", text, re.IGNORECASE):
+                explicit_modalities.discard("DR")
+            # 源模态仅作为前缀的错桶项目（如 "MR经食管超声心动图" 实为 US 检查）：
+            # 去除开头模态前缀后剩余文本只提及单一且不同的模态 → 源前缀非第二项检查，
+            # 不要求其被标准覆盖。可避免 MR错标TEE、CT错标超声等数据质量误判。
+            if source_modality and source_modality in explicit_modalities:
+                stripped_text = re.sub(
+                    r'^\s*(?:MRI|MRA|MRV|MR|CTA|CT|US|ULTRASOUND|DR|CR|MG|RF|SPECT|DSA)\s*',
+                    '', text, flags=re.IGNORECASE)
+                stripped_mods = mentioned_modalities(stripped_text)
+                # 去掉冗余  校验：中文紧随前缀时  不生效（CJK 属于 \w）
+                if (stripped_mods and len(stripped_mods) == 1
+                        and source_modality not in stripped_mods):
+                    explicit_modalities.discard(source_modality)
             if not explicit_modalities.issubset(matched_modalities):
                 requires_review = True
                 reason = "compound_item_incomplete"

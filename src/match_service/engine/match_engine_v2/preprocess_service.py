@@ -55,6 +55,14 @@ class PreprocessService:
         text = self._expand_left_right(text)
         text = self._complete_vertebra_segments(text)
         text = self._apply_db_rules(text, modality, version)
+        # RF 造影类别名归一化（标准库命名以"结肠/肾盂"等解剖部位为准）
+        if modality == 'RF':
+            text = text.replace('灌肠造影', '结肠造影')
+            text = text.replace('灌肠', '结肠')
+            text = text.replace('下消化道', '结肠')
+        # DR 骨密度检查 → 骨密度测定（标准库命名，配合词库 scan 类型）
+        if modality == 'DR':
+            text = text.replace('骨密度检查', '骨密度测定')
         return text, self.bracket_handler
 
     @staticmethod
@@ -82,9 +90,10 @@ class PreprocessService:
         # 剥离特殊MR序列修饰语（标准库命名不含这些，需归一化）
         # 涵盖：SWI、FLAIR、3D-FLAIR、3D-STIR-TSE、化学位移等
         special_sequences = [
+            # 长词优先，避免 "3D-FLAIR序列" 被 "FLAIR序列" 截断残留 "3D-"
+            '3D-FLAIR序列', '3D-FLAIR', '3D-STIR-TSE', '3D-STIR',
             'SWI序列', 'SWI',
-            'FLAIR序列', 'FLAIR', '3D-FLAIR序列', '3D-FLAIR',
-            '3D-STIR-TSE', '3D-STIR',
+            'FLAIR序列', 'FLAIR',
             '化学位移成像', '化学位移',
             'TRUFI', 'HASTE', 'FIESTA',
         ]
@@ -113,6 +122,18 @@ class PreprocessService:
         text = text.replace('（低剂量扫描）', '(平扫)')
         text = re.sub(r'低剂量(扫描|平扫)', '平扫', text)
 
+        # 双能量CT修饰语剥离（标准库命名为"能量扫描"，见 CT能谱扫描）
+        text = re.sub(r'[(（]?双能量CT[)）]?', '', text)
+
+        # FFRCT/CT-FFR 功能学评估剥离（不影响 CT 冠状动脉血管成像匹配）
+        text = re.sub(r'[+及与]FFRCT', '', text)
+        text = re.sub(r'[(（]?FFRCT[)）]?', '', text)
+        text = re.sub(r'联合CT血流储备分数[^)）]*[)）]?', '', text)
+        text = re.sub(r'[+及与]CT[-]?FFR[)）]?', '', text)
+
+        # MR 含增强及血管成像序列 → (平扫+增强)（"MRI肝脏（含增强及血管成像序列）"）
+        text = re.sub(r'[(（]含[^)）]*血管成像[^)）]*[)）]', '(平扫+增强)', text)
+
         # 部位别名归一化
         text = text.replace('鼻窦', '副鼻窦')
 
@@ -120,6 +141,14 @@ class PreprocessService:
         # 特殊造影方式归一化
         text = re.sub(r'[(（]?直接造影[)）]?', '(增强)', text)
         text = re.sub(r'[(（]?脊髓造影[)）]?', '(增强)', text)
+
+        # 钆造影归一化为增强（MR内耳经静脉/经鼓室钆造影等）
+        text = re.sub(r'[(（]?经静脉钆造影[)）]?', '(增强)', text)
+        text = re.sub(r'[(（]?经鼓室钆造影[)）]?', '(增强)', text)
+        text = re.sub(r'钆造影', '增强', text)
+        # 清理归一化后括号内残留运算符，如 "(增强+)" 的尾部 "+"
+        text = re.sub(r'[+][)）]', ')', text)
+        text = re.sub(r'[+-]+$', '', text)
 
         # 多期增强+血管成像 → CTA
         text = re.sub(r'[(（]?双?低?剂量?多期(动态)?增强[+及与]血管成像[)）]?', '(CTA)', text)
@@ -163,6 +192,7 @@ class PreprocessService:
             r'目标部位',
             r'指定部位',
             r'相关部位',
+            r'中枢神经系统',  # 胎儿中枢神经系统 → 胎儿（MR胎儿(平扫) 为唯一标准项）
         ]
         for pattern in generic_body_patterns:
             text = re.sub(pattern, '', text)
@@ -238,9 +268,48 @@ class PreprocessService:
             item = item.strip()
             if not item:
                 continue
+            # 跨模态联合拆分："X联合Y"（X/Y 模态前缀不同）→ 两个独立子项，
+            # 各配各的标准（组合语义）。同模态技术联合（如"高低频联合彩超"）
+            # 不拆分，避免把同一检查的技术描述拆散。
+            if '联合' in item:
+                left, _, right = item.partition('联合')
+                left_mod = self._detect_modality_prefix(left)
+                right_mod = self._detect_modality_prefix(right)
+                if (left_mod and right_mod and left_mod != right_mod
+                        and left.strip() and right.strip()):
+                    for sub in (left.strip(), right.strip()):
+                        detected = self._detect_modality(sub, default_modality)
+                        result.append((detected, idx, sub))
+                    continue
             detected = self._detect_modality(item, default_modality)
             result.append((detected, idx, item))
         return result
+
+    @staticmethod
+    def _detect_modality_prefix(text: str) -> str:
+        """提取文本中的高置信模态前缀（供跨模态联合拆分判断）"""
+        upper = str(text or '').upper()
+        if re.search(r'PET\s*[-/]?\s*(?:MRI|MR)(?![A-Z])', upper):
+            return 'PET/MR'
+        if re.search(r'PET\s*[-/]?\s*CT(?![A-Z])', upper):
+            return 'PET/CT'
+        if re.search(r'SPECT', upper):
+            return 'SPECT'
+        if re.search(r'超声|彩超|US(?![A-Z])', upper):
+            return 'US'
+        if re.search(r'MRI|MRA|MRV|MR(?![A-Z])', upper):
+            return 'MR'
+        if re.search(r'乳腺断层|断层摄影|钼靶', upper):
+            return 'MG'
+        if re.search(r'X\s*线|DR|CR', upper):
+            return 'DR'
+        if re.search(r'CTA|CT(?![A-Z])', upper):
+            return 'CT'
+        if re.search(r'RF', upper):
+            return 'RF'
+        if re.search(r'DSA|血管造影', upper):
+            return 'DSA'
+        return None
 
     @staticmethod
     def _detect_modality(item: str, default: str) -> str:
@@ -266,8 +335,15 @@ class PreprocessService:
         # 钼靶
         if '钼靶' in item:
             return 'MG'
+        # 乳腺关键词路由到 MG 仅限摄影类检查（X线/DR 乳腺钼靶、断层）；
+        # "乳腺导管造影"是 RF 专有检查，不得被路由到 MG。
         if any(k in item for k in ('乳腺', '双乳', '左乳', '右乳', '乳房')):
-            return 'MG'
+            if default in ('DR', 'MG', '') and not (
+                '造影' in item or '导管' in item or '超声' in item
+            ):
+                return 'MG'
+            if '断层' in item or '摄影' in item or '钼靶' in item:
+                return 'MG'
 
         # DR
         if 'DR' in upper:
