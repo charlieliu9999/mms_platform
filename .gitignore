@@ -10,3 +10,27 @@ venv/
 *.log
 scripts/.batch_progress.json
 .esdata/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 部署脚本（含凭证）
+deploy.sh
+
+# GitLab Runner
+.gitlab-runner/
+
+# Claude
+.claude/
+
+# 临时文件
+scratch/
+*.bak
+*.backup.*
