@@ -198,7 +198,7 @@ class RuleDataLoader:
             "version, item_code, item_name "
             "FROM standard_check_items "
             "WHERE is_active = true "
-            "  AND version = 'V3.8.2' "
+            "  AND version IN ('V3.8.2', 'v3.8.2') "
             "  AND item_name LIKE '* %'"
         ))
         rows = result.fetchall()

@@ -270,10 +270,19 @@ class StandardLookupService:
                         modality: str, version: str):
         df_std = None
         mod_versions = self.data_loader.df_standard.get(modality, {})
+
+        # 版本查找：忽略大小写
         for ver in VERSION_FALLBACK.get(version, [version]):
+            # 尝试原始版本
             if ver in mod_versions:
                 df_std = mod_versions[ver]
                 break
+            # 尝试小写版本（兼容 v3.8.2 vs V3.8.2）
+            ver_lower = ver.lower()
+            if ver_lower in mod_versions:
+                df_std = mod_versions[ver_lower]
+                break
+
         if df_std is None:
             return
         dup_set: Set[str] = set()
@@ -323,7 +332,7 @@ class StandardLookupService:
             post_vals = sorted(set(post_vals))
 
             position_vals = []
-            if modality == 'MG':
+            if modality in ('MG', 'DR'):  # DR 也需要使用 position
                 for i in node.pos_dict.get('position', []):
                     position_vals += node.std_names[i].split('|')
                 position_vals = sorted(set(position_vals))
@@ -391,7 +400,8 @@ class StandardLookupService:
             return self._query_rf_mg(
                 df, bodies, process_vals, modality, position_vals)
         elif modality == 'DR':
-            return self._query_dr(df, bodies, process_vals)
+            # DR 使用 position_vals，不是 process_vals
+            return self._query_dr(df, bodies, position_vals or [])
         else:
             return pd.DataFrame(), False
 

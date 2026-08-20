@@ -23,6 +23,11 @@ class DRSplitter:
         '复杂模拟定位',
         '专用X线机复杂模拟定位',
         '影像中心',
+        '数字影像服务',
+        '床旁加收',
+        '等大影像',
+        '放大影像',
+        '不含片',
     }
 
     # DR 检查项目常见前缀（需要剥离）
@@ -59,10 +64,11 @@ class DRSplitter:
             text: 原始检查项目文本
 
         Returns:
-            True 如果包含逗号分隔的多个子项
+            True 如果包含分隔符的多个子项
         """
-        # 简单判断：包含逗号或顿号
-        return ',' in text or '，' in text or '、' in text
+        # 支持多种分隔符：逗号、顿号、分号、竖线、中文句号、方括号组合
+        separators = [',', '，', '、', ';', '；', '|', '。', '][']
+        return any(sep in text for sep in separators)
 
     def split(self, text: str) -> List[str]:
         """
@@ -74,10 +80,46 @@ class DRSplitter:
         Returns:
             拆分后的子项列表（已过滤耗材/操作，已清理前后缀）
         """
-        # 1. 按逗号/顿号分割
-        # 统一转换为英文逗号
+        # 1. 清理噪声符号
+        text = text.replace('++', '').replace(';;', ';')
+        text = text.replace('_DR_', ',').replace('DR_', '')
+
+        # 2. 统一分隔符为逗号
+        # 支持：逗号、顿号、分号、竖线、中文句号
         text = text.replace('，', ',').replace('、', ',')
+        text = text.replace(';', ',').replace('；', ',')
+        text = text.replace('|', ',').replace('。', ',')
+
+        # 3. 处理方括号分隔：[项目1][项目2] → 项目1,项目2
+        text = re.sub(r'\]\s*\[', ',', text)
+        text = text.replace('[', '').replace(']', '')
+
+        # 4. 分割
         items = text.split(',')
+
+        # 5. 清理每个子项
+        cleaned_items = []
+        for item in items:
+            item = item.strip()
+            if not item:
+                continue
+
+            # 过滤耗材和操作项
+            if self._is_material_or_operation(item):
+                logger.debug(f"DR拆分：过滤耗材/操作项: {item}")
+                continue
+
+            # 清理前后缀
+            cleaned = self._clean_item(item)
+            if cleaned:
+                cleaned_items.append(cleaned)
+
+        logger.info(
+            f"DR拆分: {len(items)}项 → {len(cleaned_items)}项有效检查项 "
+            f"(原始: {text[:50]}...)"
+        )
+
+        return cleaned_items
 
         # 2. 清理每个子项
         cleaned_items = []
@@ -117,7 +159,7 @@ class DRSplitter:
 
     def _clean_item(self, item: str) -> str:
         """
-        清理单个子项，去除前后缀
+        清理单个子项，去除前后缀和噪声
 
         Args:
             item: 单个子项
@@ -125,14 +167,25 @@ class DRSplitter:
         Returns:
             清理后的核心检查名称
         """
-        # 去除前缀 (DR)、DR、[DR]
+        # 去除常见前缀标记
+        item = re.sub(r'^\[.*?\]', '', item)  # [其他]、[右踝] 等
+        item = re.sub(r'^正侧/正斜\(', '', item)  # 正侧/正斜(
+
+        # 去除 DR 前缀 (DR)、DR、[DR]
         cleaned = self._prefix_pattern.sub('', item)
 
-        # 去除后缀：数字化摄影、DR摄影、摄影
+        # 去除后缀：数字化摄影、DR摄影、摄影、片
         cleaned = self._suffix_pattern.sub('', cleaned)
+        cleaned = re.sub(r'片$', '', cleaned)
+        cleaned = re.sub(r'摄片$', '', cleaned)
 
-        # 去除首尾空格
-        cleaned = cleaned.strip()
+        # 去除括号中的补充说明
+        cleaned = re.sub(r'\(DR\)$', '', cleaned)
+        cleaned = re.sub(r'（.*?）$', '', cleaned)  # 移除尾部括号说明
+        cleaned = re.sub(r'\(.*?\)$', '', cleaned)
+
+        # 去除首尾空格和多余符号
+        cleaned = cleaned.strip().strip(';').strip()
 
         return cleaned
 
