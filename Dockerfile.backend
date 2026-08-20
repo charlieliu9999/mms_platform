@@ -24,9 +24,8 @@ RUN poetry install --no-dev --no-root
 
 # 复制应用代码
 COPY src/ ./src/
-COPY alembic/ ./alembic/
-COPY alembic.ini ./
 COPY migrations/ ./migrations/
+COPY alembic.ini ./
 
 # 创建日志目录
 RUN mkdir -p /app/logs
