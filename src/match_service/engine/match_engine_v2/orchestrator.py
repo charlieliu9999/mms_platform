@@ -18,6 +18,7 @@ from .constants import SPECIAL_ITEM_MARKERS
 from ..modality_resolver import infer_text_modality
 from .data_loader import RuleDataLoader, normalize_standard_name
 from .disambiguation_service import DisambiguationService
+from .dr_splitter import DRSplitter
 from .pattern_processor import PatternProcessor
 from .preprocess_service import PreprocessService
 from .standard_lookup_service import StandardLookupService
@@ -85,6 +86,8 @@ class MatchEngineOrchestrator:
         self.pattern_processor: PatternProcessor = None
         self.disamb_service: DisambiguationService = None
         self.lookup_service: StandardLookupService = None
+        # DR 复合项目拆分器
+        self.dr_splitter: DRSplitter = DRSplitter()
         # 关键词引擎（US/SPECT/PET），懒加载避免循环导入
         self._kw_matcher = None
         self._initialized = False
@@ -249,6 +252,24 @@ class MatchEngineOrchestrator:
         if modality not in self.NLP_MODALITIES:
             return _empty_result(record, reason='unsupported_modality')
 
+        # DR 复合项目检测和拆分（在进入 NLP pipeline 之前）
+        if modality == 'DR' and self.dr_splitter.is_complex_item(record):
+            logger.info(f"DR复合项目检测: {record}")
+            # 使用拆分器处理复合项目
+            result = self.dr_splitter.split_and_match(
+                record,
+                match_func=lambda text, mod: self._match_single_dr_item(
+                    text, mod, version, trace
+                ),
+                modality=modality
+            )
+            # 添加路由信息
+            if modality_routed:
+                result['source_modality'] = original_modality
+                result['effective_modality'] = modality
+                result['modality_routed'] = True
+            return result
+
         if modality == 'DR':
             process_type = 'position'
             query_fields = {'body': [], 'position': [], 'scan': []}
@@ -281,6 +302,35 @@ class MatchEngineOrchestrator:
         )
 
         return result
+
+    def _match_single_dr_item(self, record: str, modality: str,
+                              version: str = "V3.8.2", trace: dict = None) -> dict:
+        """
+        匹配单个 DR 检查项（不进行复合拆分，直接匹配）
+
+        这是拆分后的子项匹配入口，避免递归调用复合拆分逻辑。
+
+        Args:
+            record: 单个 DR 检查项文本
+            modality: 模态（应该是 DR）
+            version: 标准库版本
+            trace: 调试信息收集器
+
+        Returns:
+            匹配结果字典
+        """
+        if modality == 'DR':
+            process_type = 'position'
+            query_fields = {'body': [], 'position': [], 'scan': []}
+        else:
+            process_type = 'scan'
+            query_fields = {'body': [], 'scan': [], 'post': []}
+
+        if trace is not None:
+            trace['op'] = []
+
+        return self._inner_match(record, process_type, query_fields, modality,
+                                version, trace=trace)
 
     def _match_exact_standard_name(self, record: str,
                                    source_modality: str) -> dict | None:
