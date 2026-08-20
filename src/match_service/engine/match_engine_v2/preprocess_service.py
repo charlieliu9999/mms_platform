@@ -79,6 +79,18 @@ class PreprocessService:
                 .replace('弥散加权成像', '').replace('扩散加权成像', '')
                 .replace('弥散', '').replace('扩散', ''))
 
+        # 剥离特殊MR序列修饰语（标准库命名不含这些，需归一化）
+        # 涵盖：SWI、FLAIR、3D-FLAIR、3D-STIR-TSE、化学位移等
+        special_sequences = [
+            'SWI序列', 'SWI',
+            'FLAIR序列', 'FLAIR', '3D-FLAIR序列', '3D-FLAIR',
+            '3D-STIR-TSE', '3D-STIR',
+            '化学位移成像', '化学位移',
+            'TRUFI', 'HASTE', 'FIESTA',
+        ]
+        for seq in special_sequences:
+            text = text.replace(seq, '')
+
         # 去除连字符（保护医学缩写 CE-MRA/CE-MRV/CE-CT 等，Step 8.5 依赖原文判断增强）
         _protected = ('CE-MRA', 'CE-MRV', 'CE-CT', 'CE-MRI')
         for term in _protected:

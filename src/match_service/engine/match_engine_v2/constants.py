@@ -29,6 +29,7 @@ SPECIAL_ITEM_MARKERS: Dict[str, str] = {
     '临床操作': 'clinical_op',
     '穿刺定位': 'biopsy',
     '穿刺活检': 'biopsy',
+    '靶向穿刺': 'biopsy',
     '活检': 'biopsy',
 
     # 介入治疗（Phase 1 扩展）
@@ -40,6 +41,8 @@ SPECIAL_ITEM_MARKERS: Dict[str, str] = {
     '球囊扩张': 'intervention',
     '血管成形': 'intervention',
     '经导管': 'intervention',
+    '排粪造影': 'intervention',
+    '声学造影': 'intervention',
 
     # 影像引导
     '引导下': 'image_guided',
