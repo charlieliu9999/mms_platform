@@ -18,6 +18,7 @@ jieba = ">=0.42"
 httpx = ">=0.25.0"
 redis = ">=5.0"
 alembic = ">=1.13.0"
+openpyxl = "^3.1.5"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0"
