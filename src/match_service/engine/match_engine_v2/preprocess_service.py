@@ -117,6 +117,10 @@ class PreprocessService:
         text = text.replace('鼻窦', '副鼻窦')
 
         # === 技术描述规范化（算法资产：减少解析残留）===
+        # 特殊造影方式归一化
+        text = re.sub(r'[(（]?直接造影[)）]?', '(增强)', text)
+        text = re.sub(r'[(（]?脊髓造影[)）]?', '(增强)', text)
+
         # 多期增强+血管成像 → CTA
         text = re.sub(r'[(（]?双?低?剂量?多期(动态)?增强[+及与]血管成像[)）]?', '(CTA)', text)
         text = re.sub(r'[(（]?多期(动态)?增强[+及与]血管成像[)）]?', '(CTA)', text)
