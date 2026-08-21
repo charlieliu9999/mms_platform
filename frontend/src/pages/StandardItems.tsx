@@ -36,19 +36,9 @@ export default function StandardItems() {
         if (res.modality_count) setStatsModalityCount(res.modality_count);
         if (res.body_part_count) setStatsBodyPartCount(res.body_part_count);
 
-        // 处理模态统计数据，将PET拆分为PET/CT和PET/MR显示
+        // 直接使用后端返回的模态统计数据（数据库中已经分别存储 PET/CT 和 PET/MR）
         if (res.by_modality && Object.keys(res.by_modality).length > 0) {
-          const processedModality = { ...res.by_modality };
-
-          // 如果有PET数据，同时显示为PET/CT和PET/MR（各占一半，向上取整）
-          if (processedModality.PET) {
-            const petCount = processedModality.PET;
-            processedModality['PET/CT'] = Math.ceil(petCount / 2);
-            processedModality['PET/MR'] = Math.floor(petCount / 2);
-            delete processedModality.PET;
-          }
-
-          setByModality(processedModality);
+          setByModality(res.by_modality);
         }
 
         if (res.available_versions && res.available_versions.length > 0) setAvailableVersions(res.available_versions);
