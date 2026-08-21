@@ -61,11 +61,8 @@ export default function StandardItems() {
   const loadItems = useCallback(async () => {
     setLoading(true);
     try {
-      // PET/CT 和 PET/MR 在数据库中存储为 PET
-      let queryModality = selectedModality;
-      if (selectedModality === 'PET/CT' || selectedModality === 'PET/MR') {
-        queryModality = 'PET';
-      }
+      // PET/CT 和 PET/MR 在数据库中是分别存储的，直接使用选择的模态
+      const queryModality = selectedModality;
 
       const res: any = await adminAPI.getStandardItems({
         page,

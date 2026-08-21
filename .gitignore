@@ -34,3 +34,9 @@ deploy.sh
 scratch/
 *.bak
 *.backup.*
+*.tar.gz
+*.zip
+.handoff.md
+
+# 进程文件
+logs/*.pid
