@@ -25,6 +25,25 @@ async def _get_session() -> AsyncSession:
         yield session
 
 
+def _normalize_version(version: Optional[str]) -> Optional[str]:
+    """统一版本号格式为小写
+
+    将前端传入的版本号统一转为小写，解决数据库大小写不一致问题。
+    数据库中存储的版本号是小写格式（v3.8.2, v4.0.0）
+
+    例如: V3.8.2 -> v3.8.2, V4.0.0 -> v4.0.0
+
+    Args:
+        version: 原始版本号（可能为 None 或任意大小写）
+
+    Returns:
+        小写版本号或 None
+    """
+    if version and version.strip():
+        return version.lower()
+    return None
+
+
 # ============================================================================
 # 统计信息接口
 # ============================================================================
@@ -265,14 +284,17 @@ async def get_standard_items(
     - items: 项目列表
     """
     try:
+        # 统一版本号格式为小写
+        version = _normalize_version(version)
+
         # 构建查询条件
         where_clauses = ["is_active = true"]
         params = {}
-        
+
         if modality:
             where_clauses.append("modality = :modality")
             params["modality"] = modality
-        
+
         if version:
             where_clauses.append("version = :version")
             params["version"] = version
@@ -374,13 +396,16 @@ async def get_filter_options(
     - body_part_l1_options: 一级部位选项
     """
     try:
+        # 统一版本号格式为小写
+        version = _normalize_version(version)
+
         where_clauses = ["is_active = true"]
         params = {}
-        
+
         if modality:
             where_clauses.append("modality = :modality")
             params["modality"] = modality
-        
+
         if version:
             where_clauses.append("version = :version")
             params["version"] = version

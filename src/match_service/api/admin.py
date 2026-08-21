@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
+
+def _normalize_version(version: Optional[str]) -> Optional[str]:
+    """统一版本号格式为小写
+
+    将前端传入的版本号统一转为小写，解决数据库大小写不一致问题。
+    数据库中存储的版本号是小写格式（v3.8.2, v4.0.0）
+
+    例如: V3.8.2 -> v3.8.2, V4.0.0 -> v4.0.0
+
+    Args:
+        version: 原始版本号（可能为 None 或任意大小写）
+
+    Returns:
+        小写版本号或 None
+    """
+    if version and version.strip():
+        return version.lower()
+    return None
+
+
 # ---------------------------------------------------------------------------
 # 词库表元数据（B-01/B-03/B-04/B-05/B-09/B-22 修复的核心依据）
 #
@@ -726,6 +746,9 @@ async def get_standard_items(
     """标准项目查询（分页+多维筛选+版本筛选）"""
     offset = (page - 1) * page_size
 
+    # 统一版本号格式为小写
+    version = _normalize_version(version)
+
     # 构建查询条件（B-08修复：使用新表 standard_check_items）
     where_clauses = ["is_active = true"]  # 只查询有效数据
     params = {}
@@ -804,6 +827,9 @@ async def get_standard_item_stats(
         version: 指定版本号，如果为空则显示所有版本数据
         include_all_versions: 是否包含所有版本（默认False，只统计每个模态的最新版本）
     """
+
+    # 统一版本号格式为小写
+    version = _normalize_version(version)
 
     # 如果指定了version参数，直接按版本筛选
     if version:
