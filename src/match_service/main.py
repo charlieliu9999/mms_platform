@@ -70,6 +70,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/health")
+async def health_check():
+    """健康检查端点 - 用于监控和负载均衡"""
+    return {
+        "status": "healthy",
+        "service": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+    }
+
+
+@app.get("/api")
+async def api_info():
+    """API 信息和可用端点"""
+    return {
+        "service": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "endpoints": {
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+            "health": "/health",
+            "match": "/api/match/*",
+            "admin": "/api/admin/*",
+            "open": "/api/open/*",
+            "legacy": "/algorithm/*",
+            "evaluation": "/api/evaluation/*",
+        },
+    }
+
+
 app.include_router(router, prefix="/api", tags=["matching"])
 # 旧服务 API 兼容层（Phase C1/C2）：平替生产 examine-standard(:50000)
 app.include_router(legacy_router)
