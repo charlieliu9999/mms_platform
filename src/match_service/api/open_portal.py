@@ -26,22 +26,15 @@ async def _get_session() -> AsyncSession:
 
 
 def _normalize_version(version: Optional[str]) -> Optional[str]:
-    """统一版本号格式为小写
-
-    将前端传入的版本号统一转为小写，解决数据库大小写不一致问题。
-    数据库中存储的版本号是小写格式（v3.8.2, v4.0.0）
-
-    例如: V3.8.2 -> v3.8.2, V4.0.0 -> v4.0.0
-
-    Args:
-        version: 原始版本号（可能为 None 或任意大小写）
-
-    Returns:
-        小写版本号或 None
-    """
-    if version and version.strip():
-        return version.lower()
-    return None
+    """统一版本号格式，支持简写（v3→v3.8.2，v4→v4.0.0）"""
+    if not version or not version.strip():
+        return None
+    v = version.strip().lower()
+    if v in ("v3", "3"):
+        return "v3.8.2"
+    if v in ("v4", "4"):
+        return "v4.0.0"
+    return v
 
 
 # ============================================================================
@@ -320,7 +313,7 @@ async def get_standard_items(
         
         # 查询数据
         query_sql = f"""
-            SELECT 
+            SELECT
                 id, item_code, item_name, modality, modality_code,
                 body_part_l1, body_part_l1_code,
                 body_part_l2, body_part_l2_code,
@@ -329,7 +322,12 @@ async def get_standard_items(
                 scan_method, scan_method_code,
                 post_processing, post_processing_code,
                 insurance_code,
-                version, source
+                version, source,
+                body_position, scan_scope, contrast_agent,
+                image_region, image_focus, scan_method_detail, scan_param,
+                coil, base_sequence, compose_sequence,
+                clinical_indication, clinical_significance,
+                technical_notes, image_grade, image_score
             FROM standard_check_items
             WHERE {where_sql}
             ORDER BY modality, item_code
@@ -337,10 +335,10 @@ async def get_standard_items(
         """
         params["limit"] = page_size
         params["offset"] = offset
-        
+
         result = await session.execute(text(query_sql), params)
         rows = result.fetchall()
-        
+
         items = []
         for row in rows:
             items.append({
@@ -362,7 +360,22 @@ async def get_standard_items(
                 "post_processing_code": row[15],
                 "insurance_code": row[16],
                 "version": row[17],
-                "source": row[18]
+                "source": row[18],
+                "body_position": row[19],
+                "scan_scope": row[20],
+                "contrast_agent": row[21],
+                "image_region": row[22],
+                "image_focus": row[23],
+                "scan_method_detail": row[24],
+                "scan_param": row[25],
+                "coil": row[26],
+                "base_sequence": row[27],
+                "compose_sequence": row[28],
+                "clinical_indication": row[29],
+                "clinical_significance": row[30],
+                "technical_notes": row[31],
+                "image_grade": row[32],
+                "image_score": row[33],
             })
         
         return {

@@ -1,6 +1,29 @@
 # VPS 部署指南 - MMS Platform
 
-## 最新更新内容
+> **⚠️ 文档已更新**  
+> 本文档包含基础部署验证步骤和监控配置。  
+> 
+> **完整部署流程请查看新文档：**
+> - 📘 [完整部署流程](deployment/code-sync-workflow.md) - 三种部署方法详细步骤
+> - 📊 [部署方法对比](deployment/deployment-methods-comparison.md) - 代码同步流程对比
+> - 🛠️ Skill: 直接说 "部署到 VPS"，AI 会自动引导
+>
+> 本文档重点：验证步骤、监控配置、故障排查
+
+---
+
+## 快速部署（简化版）
+
+### 方法选择
+- **正式发布** → GitLab CI/CD（自动化）
+- **快速迭代** → `./scripts/quick_deploy_backend.sh`
+- **紧急修复** → Python 直接运行
+
+详细说明见：[部署方法对比](deployment/deployment-methods-comparison.md)
+
+---
+
+## 历史更新记录
 
 本次推送包含 4 个重要提交：
 1. `5cce52a` - 修复 PET/CT 和 PET/MR 统计显示 Bug
@@ -8,7 +31,13 @@
 3. `84e8e8f` - 添加 VPS API 测试脚本
 4. `0a5d718` - 添加完整的 API 端点文档
 
-## VPS 部署步骤
+## VPS 部署步骤（传统方式）
+
+> **💡 提示：** 这是传统的手动部署方式，适合了解基础流程。  
+> 实际使用建议：
+> - **自动化部署** → 见 [GitLab CI/CD 流程](deployment/code-sync-workflow.md#方法一gitlab-cicd-自动部署推荐)
+> - **快速部署** → 使用 `./scripts/quick_deploy_backend.sh`
+> - **AI 辅助** → 直接说 "部署到 VPS"
 
 ### 1. 连接到 VPS
 ```bash
