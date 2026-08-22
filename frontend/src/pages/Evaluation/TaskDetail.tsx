@@ -92,7 +92,8 @@ const TaskDetail: React.FC = () => {
   const loadDetailedAnalysis = async () => {
     if (!taskId) return;
     try {
-      const response = await fetch(`http://localhost:9100/api/evaluation/tasks/${taskId}/analysis`);
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+      const response = await fetch(`${apiBaseUrl}/evaluation/tasks/${taskId}/analysis`);
       const data = await response.json();
       setModalityPerformance(data.modality_performance || []);
       setFrequentFailures(data.frequent_failures || []);
