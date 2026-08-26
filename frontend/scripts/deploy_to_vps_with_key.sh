@@ -52,6 +52,9 @@ rsync -avz --progress \
   --exclude='.claude/' \
   --exclude='.DS_Store' \
   --exclude='.env' \
+  --exclude='.env.local' \
+  --exclude='.env.development' \
+  --include='.env.production' \
   --exclude='.pytest_cache/' \
   --exclude='scratch/' \
   --exclude='frontend/node_modules/' \
