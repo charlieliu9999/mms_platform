@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "dataset_id": "acr-4555-pr-v1",
+  "dataset_version": "20260830T155400Z",
+  "expected_count": 4555,
+  "id_field": "semantic_id",
+  "id_pattern": "^PR[0-9]+$",
+  "source_table": "procedure_dictionary",
+  "source_filter": "is_active = true AND semantic_id ~ '^PR[0-9]+$'",
+  "source_database_revision": "33a6ffc77484",
+  "frozen_at": "2026-08-30T15:54:00.623312+00:00",
+  "manifest_sha256": "a11d232637e14cf8c47396b4a8ff165fe3acbd3ccb6586796316770dacdededa"
+}
