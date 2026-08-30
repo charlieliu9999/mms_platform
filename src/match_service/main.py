@@ -26,7 +26,6 @@ from .api.evaluation import router as evaluation_router
 from .api.open_portal import router as open_portal_router
 from .config import get_settings
 from .core.engine_holder import get_engine_holder
-from .db import get_engine
 
 logging.basicConfig(
     level=logging.INFO,
@@ -89,8 +88,12 @@ async def api_info():
         "endpoints": {
             "docs": "/docs",
             "openapi": "/openapi.json",
-            "health": "/health",
-            "match": "/api/match/*",
+            "process_health": "/health",
+            "business_health": "/api/health",
+            "match_one": "/api/match",
+            "batch_match": "/api/batch-match",
+            "rule_snapshot": "/api/rules/snapshot",
+            "reload": "/api/reload",
             "admin": "/api/admin/*",
             "open": "/api/open/*",
             "legacy": "/algorithm/*",

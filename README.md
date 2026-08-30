@@ -6,7 +6,24 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> 独立的医学影像检查项目标准化匹配服务，提供完整的前后端解决方案
+> 独立的医学影像检查项目标准化服务；`acrac_web_mgmt` 等业务系统只通过稳定 HTTP 契约消费结果。
+
+## 服务目标与验收标准
+
+唯一业务目标是把医院原始检查项目转换为可追溯、可版本化的标准检查项目，并在
+4,555 个 ACR 检查项目全量评价集上持续减少未匹配项。任何优化都不能以牺牲其他模态
+或既有正确结果为代价。
+
+标准消费者契约：
+
+- `GET /api/health`：业务就绪状态，必须检查 `engine_ready=true`
+- `GET /api/rules/snapshot`：当前规则指纹和就绪状态
+- `POST /api/batch-match`：批量标准化；输入 `items[].key/name/modality`
+- `POST /api/reload`：热重载规则并使缓存失效
+
+批量结果位于 `results[key].data[].standard[{code,name}]`，并携带置信度、匹配层级、
+有效模态和顶层规则版本。`modality` 可以传空字符串，由 MMS 根据检查项目文本推断。
+详见 [PROJECT_CORE_PRINCIPLES.md](./PROJECT_CORE_PRINCIPLES.md)。
 
 ## 🎯 核心功能
 
@@ -14,7 +31,7 @@
 - **管理后台**: 词库 CRUD、统计看板、版本追溯
 - **AI 增强**: 自动分析未匹配项目，提供优化建议
 - **灰度部署**: Nginx 流量分流，平滑切换
-- **API 兼容**: Legacy API 支持旧服务无缝平替
+- **API 兼容**: 新版 `/api/*` 契约供主项目调用，Legacy API 仅用于迁移期兼容
 
 ## 🚀 快速开始
 
@@ -154,7 +171,7 @@ npm run build       # 构建测试
   - 短语映射: 7,839 条
   - 消歧规则: 1,229 条
 - **代码量**: 13,000+ 行
-- **测试覆盖**: 46 个测试 (100% 通过率)
+- **质量门禁**: 后端测试、前端类型检查/构建、API 契约和 4,555 项全量评估分别验收
 
 ## 🚢 部署
 
