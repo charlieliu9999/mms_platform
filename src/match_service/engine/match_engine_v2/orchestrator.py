@@ -10,6 +10,7 @@
 """
 import asyncio
 import logging
+import re
 from typing import Dict, List, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -240,7 +241,17 @@ class MatchEngineOrchestrator:
         if modality in self.KW_MODALITIES:
             if trace is not None:
                 trace['op'] = ['keyword_engine']
-            result = self._kw_match(record, modality)
+            if re.search(r'[,，;；|。]', record):
+                result = self.dr_splitter.split_and_match(
+                    record,
+                    match_func=lambda text, mod: (
+                        self._match_exact_standard_name(text, mod)
+                        or self._kw_match(text, mod)
+                    ),
+                    modality=modality,
+                )
+            else:
+                result = self._kw_match(record, modality)
             if modality_routed:
                 result['source_modality'] = original_modality
                 result['effective_modality'] = modality
@@ -351,11 +362,26 @@ class MatchEngineOrchestrator:
                 c for c in candidates if c["modality"] == normalized_source
             ]
             if not modality_filtered:
-                # 若请求模态无候选，严格返回 None，不跨模态回退
-                # 用户明确指定模态时，不应返回其他模态的结果
-                return None
+                # OTHER/IR/CBBCT 等非引擎模态常来自上游错桶。只有完整标准
+                # 名称命中时才允许跨桶恢复；受支持模态仍严格禁止跨模态。
+                if normalized_source in self.SUPPORTED_MODALITIES:
+                    return None
+                modality_filtered = candidates
         else:
             modality_filtered = candidates
+
+        # 精确索引可见所有有效历史版本，但当前 V3.8.2 必须优先；
+        # 否则同名的 V3.0/V3.6 归档编码会制造大面积伪冲突。
+        current_version = [
+            item for item in modality_filtered
+            if str(item.get("version", "")).lower() == "v3.8.2"
+        ]
+        if current_version:
+            modality_filtered = current_version
+        elif normalized_source in self.SUPPORTED_MODALITIES:
+            # 受支持模态没有当前版本精确项时继续走结构化/关键词引擎；
+            # 不允许 V3.0/V4 展示数据抢先制造伪冲突或跨版本命中。
+            return None
 
         # 按编码优先级选择：多候选时视为同名多编码碰撞，统一返回 ambiguous 供消歧处理
         if len(modality_filtered) > 1:

@@ -13,8 +13,6 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .constants import VERSION_FALLBACK
-
 logger = logging.getLogger(__name__)
 
 
@@ -192,6 +190,13 @@ class RuleDataLoader:
         V4.0.0 仅供显示使用，不参与标准匹配，避免 standard_data_conflict。
         同时只加载带星号(*)的标准项，因为 V3.8.2 内部也存在重复编码。
         """
+        exact_result = await conn.execute(text(
+            "SELECT modality, version, item_code, item_name "
+            "FROM standard_check_items "
+            "WHERE is_active = true"
+        ))
+        exact_rows = exact_result.fetchall()
+
         result = await conn.execute(text(
             "SELECT modality, body_part_l3, scan_method, post_processing, "
             "position_name, position_code, device_type_name, "
@@ -225,17 +230,19 @@ class RuleDataLoader:
 
         df_all.fillna("", inplace=True)
 
-        # L0 唯一标准名称索引：候选保留列表，重复名称绝不自动选择编码。
+        # 精确名称索引覆盖所有有效版本/模态；NLP 结构化查找仍只使用当前
+        # V3.8.2 视图。旧版或非 ACR 标准项可按唯一全名安全命中，
+        # 同名多编码则由 orchestrator 显式返回 ambiguous。
         self.standard_name_index = {}
-        for row in df_all.to_dict("records"):
-            key = normalize_standard_name(row.get("checkitem_name", ""))
+        for modality, version, item_code, item_name in exact_rows:
+            key = normalize_standard_name(item_name)
             if not key:
                 continue
             self.standard_name_index.setdefault(key, []).append({
-                "code": row.get("checkitem_code", ""),
-                "name": row.get("checkitem_name", ""),
-                "modality": str(row.get("modality_name", "")).upper(),
-                "version": row.get("version", ""),
+                "code": item_code or "",
+                "name": item_name or "",
+                "modality": str(modality or "").upper(),
+                "version": version or "",
             })
         for candidates in self.standard_name_index.values():
             candidates.sort(key=lambda item: (item["modality"], item["code"]))

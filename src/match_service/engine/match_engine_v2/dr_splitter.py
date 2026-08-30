@@ -7,7 +7,7 @@ DR 复合项目拆分器
 """
 import re
 import logging
-from typing import List, Tuple
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,11 @@ class DRSplitter:
         r'摄影',
     ]
 
+    _POSITION_ENUM_PATTERN = re.compile(
+        r'(?<=[正侧斜轴切卧立站负重])、(?=[正侧斜轴切卧立站负重])'
+    )
+    _POSITION_ENUM_TOKEN = '__DR_POSITION_ENUM__'
+
     def __init__(self):
         """初始化拆分器"""
         # 编译正则表达式以提高性能
@@ -66,6 +71,8 @@ class DRSplitter:
         Returns:
             True 如果包含分隔符的多个子项
         """
+        # “正、侧位”等体位枚举中的顿号不是项目分隔符。
+        text = self._POSITION_ENUM_PATTERN.sub(self._POSITION_ENUM_TOKEN, text)
         # 支持多种分隔符：逗号、顿号、分号、竖线、中文句号、方括号组合
         separators = [',', '，', '、', ';', '；', '|', '。', '][']
         return any(sep in text for sep in separators)
@@ -83,6 +90,7 @@ class DRSplitter:
         # 1. 清理噪声符号
         text = text.replace('++', '').replace(';;', ';')
         text = text.replace('_DR_', ',').replace('DR_', '')
+        text = self._POSITION_ENUM_PATTERN.sub(self._POSITION_ENUM_TOKEN, text)
 
         # 2. 统一分隔符为逗号
         # 支持：逗号、顿号、分号、竖线、中文句号
@@ -93,6 +101,7 @@ class DRSplitter:
         text = text.replace('，', ',').replace('、', ',')
         text = text.replace(';', ',').replace('；', ',')
         text = text.replace('|', ',').replace('。', ',')
+        text = text.replace(self._POSITION_ENUM_TOKEN, '、')
 
         # 3. 处理方括号分隔：[项目1][项目2] → 项目1,项目2
         text = re.sub(r'\]\s*\[', ',', text)
