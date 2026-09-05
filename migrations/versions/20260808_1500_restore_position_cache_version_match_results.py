@@ -168,6 +168,7 @@ def upgrade() -> None:
 
     # B-08 统一标准表时丢失了 position/device 维度。归档表仍保留这些字段，
     # 按 item_code 选择最近一条非空体位记录回填；DR 设备字段可由模态可靠推导。
+    # Bug #8 修复：device_type_name 是 DR 专用字段，不应用 COALESCE 回填到其他模态
     op.execute("""
         WITH archived AS (
             SELECT DISTINCT ON (checkitem_code)
@@ -180,7 +181,11 @@ def upgrade() -> None:
         UPDATE standard_check_items current
         SET position_name = archived.position_name,
             position_code = archived.position_code,
-            device_type_name = COALESCE(NULLIF(archived.device_type_name, ''), current.modality)
+            device_type_name = CASE
+                WHEN current.modality = 'DR'
+                THEN COALESCE(NULLIF(archived.device_type_name, ''), 'DR')
+                ELSE NULL
+            END
         FROM archived
         WHERE current.item_code = archived.checkitem_code
     """)
@@ -195,7 +200,8 @@ def upgrade() -> None:
 
     # 旧缓存没有规则版本，不能证明与当前词表/标准库一致。统一失效但保留记录，
     # 后续同 key 匹配会由 CacheService.store 覆盖并刷新 TTL。
-    op.execute("UPDATE match_cache SET expires_at = NOW(), rule_version = NULL")
+    # Bug #2 修复：rule_version 列定义为 NOT NULL，不能设为 NULL，使用空字符串标记失效
+    op.execute("UPDATE match_cache SET expires_at = NOW(), rule_version = ''")
 
     inspector = sa.inspect(op.get_bind())
     if not inspector.has_table("procedure_match_results"):
@@ -278,10 +284,14 @@ def downgrade() -> None:
     if _column_is_owned("match_cache", "rule_version"):
         op.drop_column("match_cache", "rule_version")
     else:
-        _restore_resized_column("match_cache", "rule_version")
+        # Bug #14 修复：只在列存在时才尝试恢复
+        if _column_info("match_cache", "rule_version") is not None:
+            _restore_resized_column("match_cache", "rule_version")
 
     for column_name in ("device_type_name", "position_code", "position_name"):
         if _column_is_owned("standard_check_items", column_name):
             op.drop_column("standard_check_items", column_name)
         else:
-            _restore_resized_column("standard_check_items", column_name)
+            # Bug #14 修复：只在列存在时才尝试恢复
+            if _column_info("standard_check_items", column_name) is not None:
+                _restore_resized_column("standard_check_items", column_name)

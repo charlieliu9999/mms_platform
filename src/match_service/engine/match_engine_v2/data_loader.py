@@ -190,6 +190,9 @@ class RuleDataLoader:
         V4.0.0 仅供显示使用，不参与标准匹配，避免 standard_data_conflict。
         同时只加载带星号(*)的标准项，因为 V3.8.2 内部也存在重复编码。
         """
+        # Bug #5 修复说明：精确名称索引需要加载所有活跃版本用于名称查找，
+        # 版本过滤由 _match_exact_standard_name 中的逻辑处理（优先 v3.8.2）
+        # 这里不应该在 SQL 层过滤，否则会导致精确名称匹配失效
         exact_result = await conn.execute(text(
             "SELECT modality, version, item_code, item_name "
             "FROM standard_check_items "
@@ -203,7 +206,8 @@ class RuleDataLoader:
             "version, item_code, item_name "
             "FROM standard_check_items "
             "WHERE is_active = true "
-            "  AND version IN ('V3.8.2', 'v3.8.2') "
+            # Bug #7 修复：版本字符串大小写不一致，使用 UPPER 统一比较
+            "  AND UPPER(TRIM(version)) = 'V3.8.2' "
             "  AND item_name LIKE '* %'"
         ))
         rows = result.fetchall()

@@ -241,15 +241,41 @@ class MatchEngineOrchestrator:
         if modality in self.KW_MODALITIES:
             if trace is not None:
                 trace['op'] = ['keyword_engine']
+            # Bug #4 修复：关键词引擎模态的复合项目拆分
+            # DR 分词器专为 DR 设计（DR_PREFIXES/DR_SUFFIXES），不应用于其他模态
+            # 关键词引擎模态如需拆分，应该使用通用分隔符拆分，不走 DR 专用逻辑
             if re.search(r'[,，;；|。]', record):
-                result = self.dr_splitter.split_and_match(
-                    record,
-                    match_func=lambda text, mod: (
-                        self._match_exact_standard_name(text, mod)
-                        or self._kw_match(text, mod)
-                    ),
-                    modality=modality,
-                )
+                # 简单分割处理，不使用 DR 分词器
+                parts = re.split(r'[,，;；|。]+', record)
+                parts = [p.strip() for p in parts if p.strip()]
+                if len(parts) > 1:
+                    # 多个子项：分别匹配后合并
+                    all_data = []
+                    total_score = 0
+                    best_tier = 'none'
+                    for part in parts:
+                        part_result = (
+                            self._match_exact_standard_name(part, modality)
+                            or self._kw_match(part, modality)
+                        )
+                        if part_result.get('data'):
+                            all_data.extend(part_result['data'])
+                        total_score += part_result.get('score', 0)
+                        if part_result.get('tier') in ('exact', 'partial', 'degraded'):
+                            best_tier = part_result['tier']
+
+                    num_standard = sum(len(d.get('standard', [])) for d in all_data)
+                    result = {
+                        'check_item': record,
+                        'num_standard': num_standard,
+                        'data': all_data,
+                        'score': total_score,
+                        'tier': best_tier if num_standard > 0 else 'none',
+                        'confidence': TIER_CONFIDENCE.get(best_tier, 0.0),
+                        'reason': '' if num_standard > 0 else 'standard_lib_gap',
+                    }
+                else:
+                    result = self._kw_match(record, modality)
             else:
                 result = self._kw_match(record, modality)
             if modality_routed:
@@ -266,12 +292,15 @@ class MatchEngineOrchestrator:
         # DR 复合项目检测和拆分（在进入 NLP pipeline 之前）
         if modality == 'DR' and self.dr_splitter.is_complex_item(record):
             logger.info(f"DR复合项目检测: {record}")
+            # Bug #12 修复：避免 lambda 闭包捕获循环变量
+            # 使用默认参数捕获当前值，而非闭包引用
+            def dr_match_func(text, mod, v=version, t=trace):
+                return self._match_single_dr_item(text, mod, v, t)
+
             # 使用拆分器处理复合项目
             result = self.dr_splitter.split_and_match(
                 record,
-                match_func=lambda text, mod: self._match_single_dr_item(
-                    text, mod, version, trace
-                ),
+                match_func=dr_match_func,
                 modality=modality
             )
             # 添加路由信息
@@ -379,9 +408,14 @@ class MatchEngineOrchestrator:
         if current_version:
             modality_filtered = current_version
         elif normalized_source in self.SUPPORTED_MODALITIES:
-            # 受支持模态没有当前版本精确项时继续走结构化/关键词引擎；
-            # 不允许 V3.0/V4 展示数据抢先制造伪冲突或跨版本命中。
-            return None
+            # Bug #6 修复说明：受支持模态没有 v3.8.2 精确项时，
+            # 如果有其他版本的同名项目（如历史版本），仍需返回 ambiguous 标记冲突
+            # 而不是返回 None 让引擎重新匹配（那样会导致同名碰撞被忽略）
+            # 但如果完全没有候选（modality_filtered 为空），则返回 None 让引擎继续
+            if not modality_filtered:
+                return None
+            # 有候选但不是 v3.8.2：保留这些候选用于碰撞检测
+            pass
 
         # 按编码优先级选择：多候选时视为同名多编码碰撞，统一返回 ambiguous 供消歧处理
         if len(modality_filtered) > 1:

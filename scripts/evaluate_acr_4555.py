@@ -128,6 +128,9 @@ def validate_live_rows(live_rows, manifest_rows):
             "live PR cohort drifted from manifest: "
             f"missing={missing[:5]}, added={added[:5]}, changed={changed[:5]}"
         )
+    # Bug #13 修复：保持 manifest 顺序，但确保每行的 database_id 与其 semantic_id 正确对应
+    # 原代码已经正确，live_by_id 是字典，按 manifest 顺序取值时 database_id 是对应的
+    # 不需要修改，这里只是确认逻辑正确
     return [live_by_id[row["semantic_id"]] for row in manifest_rows]
 
 
@@ -207,6 +210,12 @@ async def run_eval(engine, session_factory, manifest_rows, limit=0):
         try:
             result = engine.match(name, effective)
         except Exception as exc:  # keep a complete cohort even if one rule crashes
+            # Bug #9 修复：记录异常详情以便诊断问题
+            logger.error(
+                "Match engine exception for %s (modality=%s): %s: %s",
+                name, effective, type(exc).__name__, str(exc),
+                exc_info=True
+            )
             result = {
                 "tier": "error",
                 "num_standard": 0,
@@ -228,7 +237,8 @@ async def run_eval(engine, session_factory, manifest_rows, limit=0):
                 "pid": row["database_id"],
                 "semantic_id": row["semantic_id"],
                 "name": name,
-                "modality": modality.upper(),
+                # Bug #3 修复：modality 可能为 None，添加空值保护
+                "modality": (modality or "").upper(),
                 "effective_modality": effective,
                 "matched": matched,
                 "tier": tier,
@@ -250,9 +260,14 @@ def build_summary(results):
         stats["matched" if row["matched"] else "unmatched"] += 1
     modality_summary = {}
     for modality, stats in sorted(by_modality.items()):
+        # Bug #1 修复：避免除零错误
+        match_rate = (
+            round(stats["matched"] / stats["total"] * 100, 4)
+            if stats["total"] > 0 else 0.0
+        )
         modality_summary[modality] = {
             **stats,
-            "match_rate": round(stats["matched"] / stats["total"] * 100, 4),
+            "match_rate": match_rate,
         }
     total = len(results)
     return {

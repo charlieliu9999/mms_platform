@@ -21,6 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Bug #10 修复：升级时检查当前版本，确保只修改预期的 V3.0 记录
     op.execute("""
         UPDATE standard_check_items
         SET version = 'v3.8.2'
@@ -77,6 +78,7 @@ def downgrade() -> None:
            OR (item_code IN ('ACR-PR1182', 'ACR-PR1183', 'ACR-PR1184')
                AND source = 'acr_4555_manifest')
     """)
+    # Bug #10 修复：降级时也检查当前版本，确保只回滚我们升级过的记录
     op.execute("""
         UPDATE standard_check_items
         SET version = 'V3.0'
