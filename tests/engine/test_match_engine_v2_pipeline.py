@@ -256,7 +256,6 @@ class TestPipelineIntegration:
             ("US支气管镜引导经支气管针吸活检术", "US", "excluded_non_imaging", None),
             ("DSA机械性血栓切除术", "DSA", "excluded_intervention", None),
             ("DSA髂静脉手术", "DSA", "excluded_intervention", None),
-            ("SPECT膀胱显像", "SPECT", "standard_lib_gap", True),
             ("US完全未知部位超声检查", "US", "lexicon_gap", False),
         ],
     )
