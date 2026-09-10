@@ -1,124 +1,121 @@
-#!/usr/bin/env python3
-"""分析仍未匹配的项目，规划Phase 2"""
-import asyncio
+"""
+分析 Phase 2 优化目标项目
+导出 lexicon_gap 和 standard_lib_gap 的详细清单
+"""
 import sys
+import asyncio
+import json
 from pathlib import Path
+from collections import Counter, defaultdict
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# 添加项目路径
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from match_service.db import get_engine, AsyncSession
-from sqlalchemy import text
-from match_service.core.engine_holder import EngineHolder
+from match_service.core.engine_holder import get_engine_holder
 
 
-async def analyze_still_unmatched():
-    """分析仍未匹配的项目"""
-    
-    holder = EngineHolder()
+async def main():
+    # 加载 ACR 4555 评估集（从 CSV manifest）
+    manifest_file = Path(__file__).parent.parent / "data/evaluation/acr_4555_manifest.csv"
+
+    cohort = []
+    import csv as csv_module
+    with open(manifest_file, "r", encoding="utf-8") as f:
+        reader = csv_module.DictReader(f)
+        for row in reader:
+            cohort.append({
+                "text": row["name_zh"],  # 修正字段名
+                "modality": row["modality"]
+            })
+
+    print(f"加载评估集: {len(cohort)} 项")
+
+    # 初始化引擎
+    holder = get_engine_holder()
     await holder.initialize()
     engine = holder.match_engine
-    
-    db_engine = get_engine()
-    
-    # 获取所有open状态的CT/MR未匹配项
-    async with AsyncSession(db_engine) as session:
-        sql = text("""
-            SELECT u.id, u.modality, u.reason_code, p.name_zh as name
-            FROM unmatched_registry u
-            JOIN procedure_dictionary p ON p.id = u.procedure_id
-            WHERE u.status = 'open' 
-              AND u.modality IN ('CT', 'MR')
-            ORDER BY u.modality, p.name_zh
-        """)
-        result = await session.execute(sql)
-        all_items = result.fetchall()
-    
-    # 找出仍未匹配的
-    still_none = []
-    for item in all_items:
-        result = engine.match(item.name, item.modality)
-        if result['tier'] == 'none':
-            # 获取trace信息
-            trace = {}
-            result = engine.match(item.name, item.modality, trace=trace)
-            still_none.append({
-                'name': item.name,
-                'modality': item.modality,
-                'trace': trace
+
+    # 分类统计
+    lexicon_gaps = []
+    standard_gaps = []
+
+    for idx, item in enumerate(cohort, 1):
+        if idx % 100 == 0:
+            print(f"进度: {idx}/{len(cohort)}")
+
+        text = item["text"]
+        modality = item.get("modality", "")
+
+        result = engine.match(text, modality)
+        reason = result.get("reason", "")
+
+        if reason == "lexicon_gap":
+            lexicon_gaps.append({
+                "text": text,
+                "modality": modality,
+                "has_entity": result.get("has_entity", False)
             })
-    
-    print(f"仍未匹配: {len(still_none)}项\n")
-    
-    # 分类分析
-    categories = {
-        'design_exclude': [],  # 设计排除
-        'parser_fail': [],      # 解析失败
-        'lookup_fail': [],      # 查表失败（有实体但查不到）
-        'standard_gap': [],     # 标准库缺口
+        elif reason == "standard_lib_gap":
+            standard_gaps.append({
+                "text": text,
+                "modality": modality,
+                "has_entity": result.get("has_entity", True)
+            })
+
+    print(f"\n分析完成")
+    print(f"lexicon_gap: {len(lexicon_gaps)} 项")
+    print(f"standard_lib_gap: {len(standard_gaps)} 项")
+
+    # 按模态统计 lexicon_gap
+    print("\n=== lexicon_gap 按模态分布 ===")
+    lex_modality = Counter(item["modality"] for item in lexicon_gaps)
+    for modality, count in lex_modality.most_common():
+        print(f"  {modality}: {count}")
+
+    # 按模态统计 standard_lib_gap
+    print("\n=== standard_lib_gap 按模态分布 ===")
+    std_modality = Counter(item["modality"] for item in standard_gaps)
+    for modality, count in std_modality.most_common():
+        print(f"  {modality}: {count}")
+
+    # US lexicon_gap 高频词汇提取
+    print("\n=== US lexicon_gap 样本 (前 20 条) ===")
+    us_lexicon = [item for item in lexicon_gaps if item["modality"] == "US"]
+    for i, item in enumerate(us_lexicon[:20], 1):
+        print(f"  {i}. {item['text']}")
+
+    # DSA lexicon_gap 样本
+    print("\n=== DSA lexicon_gap 样本 (前 10 条) ===")
+    dsa_lexicon = [item for item in lexicon_gaps if item["modality"] == "DSA"]
+    for i, item in enumerate(dsa_lexicon[:10], 1):
+        print(f"  {i}. {item['text']}")
+
+    # DR/XR standard_lib_gap 样本
+    print("\n=== DR/XR standard_lib_gap 样本 (前 15 条) ===")
+    dr_xr_std = [item for item in standard_gaps if item["modality"] in ("DR", "XR")]
+    for i, item in enumerate(dr_xr_std[:15], 1):
+        print(f"  {i}. [{item['modality']}] {item['text']}")
+
+    # 导出到文件
+    output = {
+        "lexicon_gap": lexicon_gaps,
+        "standard_lib_gap": standard_gaps,
+        "summary": {
+            "lexicon_gap_total": len(lexicon_gaps),
+            "standard_lib_gap_total": len(standard_gaps),
+            "lexicon_by_modality": dict(lex_modality),
+            "standard_by_modality": dict(std_modality)
+        }
     }
-    
-    for item in still_none:
-        name = item['name']
-        modality = item['modality']
-        trace = item['trace']
-        
-        # 设计排除
-        if '穿刺' in name or '活检' in name or '定位' in name or '放疗' in name:
-            categories['design_exclude'].append(name)
-            continue
-        
-        # 检查是否有实体识别结果
-        has_entities = False
-        if '9-find_default_process' in trace:
-            nodes = trace['9-find_default_process']
-            if nodes:
-                has_entities = True
-                
-                # 打印前几个看看实体识别情况
-                if len(categories['lookup_fail']) < 10:
-                    node = nodes[0]
-                    categories['lookup_fail'].append({
-                        'name': name,
-                        'modality': modality,
-                        'node': str(node)[:200]
-                    })
-        
-        if not has_entities:
-            categories['parser_fail'].append(name)
-    
-    # 输出分析
-    print("="*80)
-    print("Phase 2 实施规划")
-    print("="*80)
-    
-    print(f"\n【设计排除】{len(categories['design_exclude'])}项 - 无需处理")
-    for name in categories['design_exclude'][:10]:
-        print(f"  {name}")
-    
-    print(f"\n【解析失败】{len(categories['parser_fail'])}项 - 词库补充")
-    for name in categories['parser_fail'][:10]:
-        print(f"  {name}")
-    
-    print(f"\n【查表失败】{len(categories['lookup_fail'])}项 - 查表逻辑增强（Phase 2重点）")
-    for item in categories['lookup_fail'][:10]:
-        print(f"  {item['modality']}: {item['name']}")
-        print(f"    实体: {item['node']}")
-    
-    print(f"\n剩余: {len(still_none) - len(categories['design_exclude']) - len(categories['parser_fail']) - len(categories['lookup_fail'])}项")
-    
-    print("\n" + "="*80)
-    print("Phase 2 具体任务")
-    print("="*80)
-    print(f"目标: 解决查表失败的{len(categories['lookup_fail'])}项")
-    print("方法:")
-    print("  1. 部位层级映射（小肠→全腹部）")
-    print("  2. 扫描方式模糊匹配（特殊序列→基础扫描）")
-    print("  3. 后处理忽略（三维重建、MPR等）")
-    print("  4. 部位泛化（四肢及关节→具体关节）")
-    
+
+    output_file = Path("/tmp/phase2_analysis.json")
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+
+    print(f"\n详细数据已导出到: {output_file}")
+
     await holder.dispose()
-    await db_engine.dispose()
 
 
 if __name__ == "__main__":
-    asyncio.run(analyze_still_unmatched())
+    asyncio.run(main())
