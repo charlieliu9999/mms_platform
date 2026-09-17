@@ -40,6 +40,22 @@ SNAPSHOT_SCHEMA_VERSION = 2
 MATCHED_TIERS = ("exact", "partial", "degraded")
 MODALITY_NORMALIZATION = MatchDispatcher.MODALITY_NORMALIZATION
 
+# 范围内/范围外口径（业务决策 2026-09-11）
+#
+# 以下 reason_code 表示「按设计就不在自动标准化范围内」：非影像/内镜类检查、
+# 治疗性介入操作、上游模态超出当前引擎能力、以及已登记为设计上不可匹配的项目。
+# 这些条目不能通过改算法或补标准库转化为匹配，属于分母定义问题，
+# 因此单独统计为 out_of_scope，并额外报告「范围内匹配率」。
+#
+# 注意：全量口径（total/matched/unmatched/match_rate）**保持不变**，
+# 仍是唯一对外承诺指标；in_scope_* 仅供归因与排期使用，不得替代全量口径。
+OUT_OF_SCOPE_REASONS = frozenset({
+    "unsupported_modality",
+    "unmatchable_by_design",
+    "excluded_intervention",
+    "excluded_non_imaging",
+})
+
 
 class DatasetContractError(RuntimeError):
     """The live evaluation cohort differs from the frozen ACR contract."""
@@ -253,6 +269,13 @@ async def run_eval(engine, session_factory, manifest_rows, limit=0):
 def build_summary(results):
     matched = [row for row in results if row["matched"]]
     unmatched = [row for row in results if not row["matched"]]
+    # 范围外：未匹配且原因属于设计性排除（见 OUT_OF_SCOPE_REASONS）
+    out_of_scope = [
+        row for row in unmatched if row.get("reason") in OUT_OF_SCOPE_REASONS
+    ]
+    in_scope_unmatched = [
+        row for row in unmatched if row.get("reason") not in OUT_OF_SCOPE_REASONS
+    ]
     by_modality = defaultdict(lambda: {"total": 0, "matched": 0, "unmatched": 0})
     for row in results:
         stats = by_modality[row["modality"]]
@@ -270,13 +293,24 @@ def build_summary(results):
             "match_rate": match_rate,
         }
     total = len(results)
+    in_scope_total = total - len(out_of_scope)
     return {
         "total": total,
         "matched": len(matched),
         "unmatched": len(unmatched),
         "match_rate": round(len(matched) / total * 100, 4) if total else 0.0,
+        "out_of_scope": len(out_of_scope),
+        "in_scope_total": in_scope_total,
+        "in_scope_unmatched": len(in_scope_unmatched),
+        "in_scope_match_rate": (
+            round(len(matched) / in_scope_total * 100, 4)
+            if in_scope_total else 0.0
+        ),
         "unmatched_by_reason": dict(
             sorted(Counter(row["reason"] for row in unmatched).items())
+        ),
+        "in_scope_unmatched_by_reason": dict(
+            sorted(Counter(row["reason"] for row in in_scope_unmatched).items())
         ),
         "by_modality": modality_summary,
     }
@@ -375,6 +409,25 @@ def print_summary(summary, rule_version, debug_limit=0):
         summary["unmatched_by_reason"].items(), key=lambda item: (-item[1], item[0])
     ):
         print(f"  {reason}: {count}")
+    print(
+        "\n范围口径（业务决策 2026-09-11）:"
+        f"  total={summary['total']}"
+        f" | 范围外(设计性排除)={summary['out_of_scope']}"
+        f" | 范围内={summary['in_scope_total']}"
+    )
+    print(
+        f"  范围内: matched={summary['matched']}"
+        f" / {summary['in_scope_total']}"
+        f" = {summary['in_scope_match_rate']:.2f}%"
+        f"  未匹配={summary['in_scope_unmatched']}"
+    )
+    if summary["in_scope_unmatched_by_reason"]:
+        print("  范围内未匹配 by reason:")
+        for reason, count in sorted(
+            summary["in_scope_unmatched_by_reason"].items(),
+            key=lambda item: (-item[1], item[0]),
+        ):
+            print(f"    {reason}: {count}")
     print("\nby modality:")
     for modality, stats in summary["by_modality"].items():
         print(

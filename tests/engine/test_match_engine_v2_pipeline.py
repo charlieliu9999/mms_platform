@@ -238,17 +238,21 @@ class TestPipelineIntegration:
         assert oct_result["tier"] == "exact"
         assert oct_result["data"][0]["standard"][0]["code"] == "120990000110000"
 
-    def test_exact_name_collision_is_explicitly_ambiguous(self, v2_orchestrator):
-        """同名多编码不得由旧引擎静默选择其中一个。"""
+    def test_exact_name_collision_resolved_by_code_priority(self, v2_orchestrator):
+        """同名多编码由编码优先级收敛（业务决策 2026-09-11）。
+
+        旧契约要求同名多编码一律返回 ambiguous/exact_name_collision，
+        但标准库只使用 v3.8.2 后，真正的同名多编码只剩「ACR 数字编码 +
+        内部 C010A 编码」这类可裁决组合。ACR 标准编码优先，不再要求人工。
+        无法裁决时（多候选同级）则放行到下游引擎，而不是直接判 ambiguous。
+        """
         result = v2_orchestrator.match(
             "SPECT放射性核素大动脉显像", "SPECT"
         )
-        assert result["tier"] == "ambiguous"
-        assert result["reason"] == "exact_name_collision"
-        assert result["engine"] == "standard_name_exact_collision"
-        assert {item["code"] for item in result["data"][0]["standard"]} == {
-            "C010A802B0000", "50100000110000"
-        }
+        assert result["tier"] == "exact"
+        assert result["engine"] == "standard_name_exact"
+        # ACR 14 位数字编码优先于内部 C010A 编码
+        assert result["data"][0]["standard"][0]["code"] == "50100000110000"
 
     @pytest.mark.parametrize(
         ("text", "modality", "reason", "has_entity"),

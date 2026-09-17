@@ -183,6 +183,21 @@ class MatchEngineOrchestrator:
 
         return False, ''
 
+    @staticmethod
+    def _normalize_unmatchable_reason(reason: str) -> str:
+        """把 NLP 标记名归一为评估侧统一的排除原因码。
+
+        ``_check_unmatchable`` 对 NLP 模态返回的是 ``SPECIAL_ITEM_MARKERS``
+        里的标记值（intervention/non_imaging/biopsy/...），而关键词引擎与评估
+        侧用的是 ``excluded_intervention`` / ``excluded_non_imaging``。
+        不归一会导致治疗性介入项目被误报为 ``unmatchable_by_design``，
+        影响排除清单的业务核对（两者虽同在范围外，但语义不同）。
+        """
+        return {
+            'intervention': 'excluded_intervention',
+            'non_imaging': 'excluded_non_imaging',
+        }.get(reason, reason)
+
     def match(self, record: str, modality: str, version: str = "V3.8.2",
               trace: dict = None) -> dict:
         """
@@ -233,6 +248,7 @@ class MatchEngineOrchestrator:
         # NLP 模态的不可匹配标识检查（统一守卫，在预处理前拦截）
         is_unmatchable, reason = self._check_unmatchable(record, modality)
         if is_unmatchable:
+            reason = self._normalize_unmatchable_reason(reason)
             if trace is not None:
                 trace['op'] = [f'unmatchable:{reason}']
             return _empty_result(record, tier='none', reason=reason)
@@ -244,6 +260,53 @@ class MatchEngineOrchestrator:
             # Bug #4 修复：关键词引擎模态的复合项目拆分
             # DR 分词器专为 DR 设计（DR_PREFIXES/DR_SUFFIXES），不应用于其他模态
             # 关键词引擎模态如需拆分，应该使用通用分隔符拆分，不走 DR 专用逻辑
+            hybrid = self._split_hybrid_spect_ct(record, modality)
+            if hybrid:
+                # SPECT/CT 混合显像且括号内显式列出 CT 成分：拆成 SPECT 子项
+                # 与 CT 子项分别匹配后合并（业务决策 2026-09-11）。
+                # 例 "SPECT/CT骨盆(骨显像+CT平扫)" →
+                #   SPECT骨盆(骨显像)  +  CT骨盆(平扫)
+                all_data = []
+                total_score = 0
+                best_tier = 'none'
+                for sub_text, sub_mod in hybrid:
+                    sub_result = self._match_exact_standard_name(sub_text, sub_mod)
+                    if sub_result is None:
+                        if sub_mod in self.KW_MODALITIES:
+                            sub_result = self._kw_match(sub_text, sub_mod)
+                        elif sub_mod in self.NLP_MODALITIES:
+                            sub_result = self._inner_match(
+                                sub_text, 'scan',
+                                {'body': [], 'scan': [], 'post': []},
+                                sub_mod, version)
+                        else:
+                            sub_result = _empty_result(sub_text)
+                    if sub_result.get('data'):
+                        all_data.extend(sub_result['data'])
+                    total_score += sub_result.get('score', 0)
+                    sub_tier = sub_result.get('tier', 'none')
+                    if sub_tier in ('exact', 'partial', 'degraded') \
+                            and (best_tier == 'none'
+                                 or TIER_CONFIDENCE[sub_tier]
+                                 < TIER_CONFIDENCE[best_tier]):
+                        best_tier = sub_tier
+
+                num_standard = sum(len(d.get('standard', [])) for d in all_data)
+                result = {
+                    'check_item': record,
+                    'num_standard': num_standard,
+                    'data': all_data,
+                    'score': total_score,
+                    'tier': best_tier if num_standard > 0 else 'none',
+                    'confidence': TIER_CONFIDENCE.get(best_tier, 0.0),
+                    'reason': '' if num_standard > 0 else 'standard_lib_gap',
+                }
+                if modality_routed:
+                    result['source_modality'] = original_modality
+                    result['effective_modality'] = modality
+                    result['modality_routed'] = True
+                return result
+
             if re.search(r'[,，;；|。]', record):
                 # 简单分割处理，不使用 DR 分词器
                 parts = re.split(r'[,，;；|。]+', record)
@@ -376,14 +439,25 @@ class MatchEngineOrchestrator:
                                    source_modality: str) -> dict | None:
         """按规范化名称命中唯一有效标准项。
 
-        同名多编码时，按优先级选择：ACR标准编码 > 其他编码。
-        若仍有多个候选或跨模态冲突，返回 ambiguous。
+        标准口径（决策 2026-09-11）：**只使用 v3.8.2**。索引已由
+        ``data_loader._load_standard_table`` 收敛到该版本，因此这里不再需要
+        版本过滤，也不会再出现跨版本同名并存。
+
+        候选收敛顺序：
+          1. 按模态过滤
+          2. 唯一候选 → exact
+          3. 多候选 → ``_select_by_code_priority`` 按编码优先级选唯一
+             （旧实现定义了该函数却从未调用，是缺陷①的核心）
+          4. 仍多候选 → **返回 None 放行到下游引擎**，而不是直接判 ambiguous
+             下游 NLP/关键词引擎可通过部位同义词（眼眶→眼部、鞍区→垂体）
+             给出正确结果；实测 13/17 条可回收。
+             若下游也无结果，由下游按标准路径给出 standard_lib_gap。
         """
         key = normalize_standard_name(record)
         candidates = self.data_loader.standard_name_index.get(key, [])
         if not candidates:
             return None
-        
+
         # 多候选时，先按模态过滤
         normalized_source = str(source_modality or "").upper()
         if normalized_source:
@@ -399,51 +473,26 @@ class MatchEngineOrchestrator:
         else:
             modality_filtered = candidates
 
-        # 精确索引可见所有有效历史版本，但当前 V3.8.2 必须优先；
-        # 否则同名的 V3.0/V3.6 归档编码会制造大面积伪冲突。
-        current_version = [
-            item for item in modality_filtered
-            if str(item.get("version", "")).lower() == "v3.8.2"
-        ]
-        if current_version:
-            modality_filtered = current_version
-        elif normalized_source in self.SUPPORTED_MODALITIES:
-            # Bug #6 修复说明：受支持模态没有 v3.8.2 精确项时，
-            # 如果有其他版本的同名项目（如历史版本），仍需返回 ambiguous 标记冲突
-            # 而不是返回 None 让引擎重新匹配（那样会导致同名碰撞被忽略）
-            # 但如果完全没有候选（modality_filtered 为空），则返回 None 让引擎继续
-            if not modality_filtered:
-                return None
-            # 有候选但不是 v3.8.2：保留这些候选用于碰撞检测
-            pass
-
-        # 按编码优先级选择：多候选时视为同名多编码碰撞，统一返回 ambiguous 供消歧处理
-        if len(modality_filtered) > 1:
-            standards = [
-                {"code": item["code"], "name": item["name"]}
-                for item in modality_filtered
-            ]
-            modalities = {item["modality"] for item in modality_filtered}
-            return {
-                "check_item": str(record),
-                "num_standard": len(standards),
-                "data": [{"raw": str(record), "standard": standards}],
-                "score": 4,
-                "tier": "ambiguous",
-                "confidence": TIER_CONFIDENCE["ambiguous"],
-                "reason": "exact_name_collision",
-                "has_entity": True,
-                "engine": "standard_name_exact_collision",
-                "source_modality": normalized_source,
-                "effective_modality": (
-                    next(iter(modalities)) if len(modalities) == 1
-                    else normalized_source
-                ),
-            }
-        elif len(modality_filtered) == 1:
-            candidate = modality_filtered[0]
-        else:
+        if not modality_filtered:
             return None
+
+        if len(modality_filtered) > 1:
+            # 缺陷①修复：调用已存在但从未被调用的编码优先级消歧。
+            # ACR 标准编码（14 位，2-9 开头）优先于历史/内部编码。
+            selected = self._select_by_code_priority(modality_filtered)
+            if selected is None:
+                # 同版本内仍有多个同级候选：不再直接判 ambiguous，
+                # 放行到下游语义匹配（部位同义词可解），避免把可解项拦死。
+                logger.info(
+                    "exact-name 同名多编码未收敛，放行下游: name=%s modality=%s "
+                    "candidates=%s",
+                    key, normalized_source,
+                    [c["code"] for c in modality_filtered],
+                )
+                return None
+            candidate = selected
+        else:
+            candidate = modality_filtered[0]
 
         # 检查文本模态与候选模态是否冲突
         candidate_modality = candidate["modality"]
@@ -685,6 +734,16 @@ class MatchEngineOrchestrator:
                 and not any(node.degraded for node in childrens)):
                 tier = 'exact'
                 compound_reason = ''
+            elif (match_info['num_standard'] == 1
+                  and self._unmatched_body_covered(childrens, match_info)):
+                # 并列部位分裂（Step 6）会把「笼统描述 + 括号内的更具体部位」拆成
+                # 两个节点。例如 "X线消化道造影(上消化道)" 会同时产生 body=消化道
+                # 与 body=上消化道 两个节点；前者查不到标准项（RF 无“消化道造影”
+                # 泛项），后者命中 "RF上消化道造影"。此时唯一标准项已由更具体节点
+                # 给出，未被命中的节点只是其上位/同义表述，不应整条判为 ambiguous。
+                # 判定条件很窄：未命中节点的部位词必须字面出现在已命中标准名中。
+                tier = 'degraded'
+                compound_reason = ''
             elif is_compound:
                 tier = 'degraded'
                 compound_reason = 'compound_item_incomplete'
@@ -731,6 +790,88 @@ class MatchEngineOrchestrator:
         match_info['reason'] = compound_reason
         match_info['has_entity'] = has_entity
         return match_info
+
+    @staticmethod
+    def _split_hybrid_spect_ct(record: str, modality: str):
+        """拆分 SPECT/CT（PET/CT）混合显像中括号内显式的 CT 成分。
+
+        背景：``SPECT/CT骨盆(骨显像+CT平扫)`` 的 ``/CT`` 属于混合模态名，
+        而括号内的 ``+CT平扫`` 是真正并列的第二个检查成分。旧逻辑整条丢给
+        SPECT 关键词引擎，只能拿到骨显像候选，无法给出 CT 骨盆标准。
+
+        Args:
+            record: 原始检查名
+            modality: 已解析的源模态
+
+        Returns:
+            [(子项文本, 子项模态), ...]；不命中返回 None
+        """
+        if modality not in ('SPECT', 'PET/CT'):
+            return None
+        m = re.match(
+            r'^\s*(SPECT|PET)\s*/\s*CT\s*([^()（）]*)\('
+            r'([^()（）]*?)\+\s*CT\s*([^()+（）]*)\)\s*$',
+            record,
+        )
+        if not m:
+            return None
+        hybrid_mod, body, element, ct_method = m.groups()
+        body = body.strip()
+        element = element.strip()
+        ct_method = ct_method.strip() or '平扫'
+        if not body:  # 无部位时无法定位，交回原逻辑
+            return None
+        spect_part = f'{hybrid_mod}{body}({element})'
+        ct_part = f'CT{body}({ct_method})'
+        logger.info(
+            "SPECT/CT 混合显像拆分: %s → %s | %s",
+            record, spect_part, ct_part,
+        )
+        return [(spect_part, hybrid_mod), (ct_part, 'CT')]
+
+    @staticmethod
+    def _unmatched_body_covered(childrens: List, match_info: dict) -> bool:
+        """未命中的部位节点是否已被唯一标准项完全覆盖（下位/同义表述）。
+
+        用途：Step 6 并列部位分裂会把「笼统描述 + 括号内的更具体部位」拆成两个
+        平行节点，笼统节点查不到标准项时会把整条误判为 ambiguous。
+        例："X线消化道造影(上消化道)" → 节点 body=消化道（RF 无泛项，查不到）
+        与 body=上消化道（命中 "RF上消化道造影"）。
+
+        判定（保守，四条同时成立）：
+          1. 已命中标准项恰为 1 条；
+          2. 未命中节点均非 dup_only；
+          3. 未命中节点的每一个**医学维度**实体（body/scan/post/position）
+             都**字面出现**在已命中标准名中；
+          4. 至少有一个这样的实体（避免空节点误放行）。
+
+        条件 3 是关键安全阀：只有「标准项名称确实包含该输入的全部医学词」时才
+        放行，因此真实缺项（标准库没这个部位/方法）不会被误当作已覆盖。
+        """
+        standards = [
+            str(std.get('name') or '')
+            for block in (match_info.get('data') or [])
+            for std in (block.get('standard') or [])
+        ]
+        if len(standards) != 1 or not standards[0]:
+            return False
+        std_name = standards[0]
+
+        terms: List[str] = []
+        for node in childrens:
+            if not node.entitys or node.standard_check_name:
+                continue
+            if getattr(node, 'dup_only', False):
+                continue
+            for pos in ('body', 'scan', 'post', 'position'):
+                for idx in node.pos_dict.get(pos, []):
+                    term = str(node.entitys[idx] or '').strip()
+                    if term:
+                        terms.append(term)
+
+        if not terms:
+            return False
+        return all(term in std_name for term in terms)
 
     @staticmethod
     def _node_query_signature(node) -> Tuple[frozenset, frozenset, frozenset]:
@@ -841,7 +982,8 @@ class MatchEngineOrchestrator:
                 is_unmatchable, reason = self._check_unmatchable(name, modality)
                 if is_unmatchable:
                     result[key] = {'pairs': [], 'score': 0, 'tier': 'none',
-                                   'confidence': 0.0, 'reason': reason,
+                                   'confidence': 0.0,
+                                   'reason': self._normalize_unmatchable_reason(reason),
                                    'has_entity': None}
                     continue
 

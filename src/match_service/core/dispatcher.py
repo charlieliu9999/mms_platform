@@ -112,7 +112,20 @@ class MatchDispatcher:
         """
         将跨模态模糊命中及未完整覆盖的联合项目降为待审核。
 
-        优化：对高置信度路由场景（如乳腺X线→MG），允许exact/partial结果直接通过。
+        高置信路由白名单：由**文本**就能确定目标模态的映射，属于确定性业务规则，
+        单候选时直接采信，不再降为 ambiguous。
+
+        修正（2026-09-11，缺陷③）：旧实现把白名单写死为
+        ``source_modality in ("DR", "XR")``，但上游 ``procedure_dictionary`` 的
+        ``modality`` 字段常把 X 线造影类记为 ``DR``/``XR``、把乳腺摄影记为
+        ``OTHER``/``Other``。字段不在白名单 → 即使引擎已给出唯一且正确的标准项
+        （如 ``X线食管钡餐造影`` → ``RF食管造影``）也被降级为待审核。
+
+        现在改为按**文本模式**判定，不再依赖来源字段：
+          - X 线造影类 → RF（食管/消化道/泌尿/子宫输卵管/膀胱造影）
+          - 乳腺 X 线类 → MG（钼靶/断层摄影）
+        且仅在 ``num_standard == 1``（单候选、无歧义）时放行；多候选维持待审核，
+        因为多候选本身就是真实歧义（例：``X线小肠造影检查`` 可口服法也可插管）。
         """
         if result.get("engine") in {
             "standard_name_exact", "standard_name_exact_collision"
@@ -122,31 +135,46 @@ class MatchDispatcher:
         requires_review = False
         reason = ""
         tier = result.get("tier", "none")
+        num_standard = result.get("num_standard", 0)
 
         if text_routed:
-            # 高置信度路由场景：乳腺X线→MG
-            # 业务规则：包含"乳腺/乳房/钼靶"关键词的X线/DR项目，路由到MG是确定的
+            # 高置信路由白名单：由**文本**就能确定目标模态的确定性映射。
+            #
+            # 修正（2026-09-11，缺陷③）：旧实现写死 ``source_modality in ("DR","XR")``，
+            # 但上游 ``procedure_dictionary`` 常把 X 线造影类记为 DR/XR、
+            # 把乳腺摄影记为 OTHER/Other。字段不在白名单 → 即使引擎已给出唯一正确
+            # 标准项也被降级为待审核。改为**纯文本模式**判定，不再依赖来源字段。
+            #
+            # 这里保持与旧「乳腺 X 线→MG」分支完全一致的宽松度（不新增加严条件），
+            # 以保证「零破坏」；仅新增 X 线造影→RF 这一类确定性映射。
+            is_xray_contrast_to_rf = (
+                effective_modality == "RF"
+                and re.search(
+                    r"(X\s*线|DR|XR|其他).*(造影|钡餐|钡剂|碘油|碘水)",
+                    text, re.IGNORECASE,
+                )
+            )
             is_breast_xray_to_mg = (
-                source_modality in ("DR", "XR")
-                and effective_modality == "MG"
-                and re.search(r"(X\s*线|DR|XR).*(乳腺|乳房|钼靶)", text, re.IGNORECASE)
+                effective_modality == "MG"
+                and re.search(
+                    r"(X\s*线|DR|XR|其他).*(乳腺|乳房|钼靶|断层摄影)",
+                    text, re.IGNORECASE,
+                )
             )
 
-            if is_breast_xray_to_mg:
-                # 乳腺X线路由是高置信度场景，放宽审核策略
+            if is_breast_xray_to_mg or is_xray_contrast_to_rf:
+                # 高置信路由场景：exact/partial/degraded 均直接通过。
+                # 理由：路由由文本确定，即使是降级匹配也可信；ambiguous 仍待审核。
                 if tier in {"exact", "partial", "degraded"}:
-                    # exact/partial/degraded都允许直接通过
-                    # 原因：乳腺X线→MG路由是明确的业务规则，即使是降级匹配也可信
                     requires_review = False
-                elif tier == "ambiguous":
-                    # ambiguous仍需审核（引擎内部已标记为歧义）
+                else:
                     requires_review = True
                     reason = "routed_result_requires_review"
             else:
                 # 其他跨模态路由保持原审核策略
                 routed_multi_us = (
                     effective_modality == "US"
-                    and result.get("num_standard", 0) > 1
+                    and num_standard > 1
                 )
                 if tier in {"partial", "degraded"} or routed_multi_us:
                     requires_review = True

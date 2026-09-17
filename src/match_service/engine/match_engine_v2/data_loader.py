@@ -184,19 +184,23 @@ class RuleDataLoader:
         logger.info(f"[RuleDataLoader] 加载消歧规则: {len(self.df_body_disamb)} 条")
 
     async def _load_standard_table(self, conn):
-        """加载标准项目表（B-08修复：统一从 standard_check_items 加载）
+        """加载标准项目表（统一从 standard_check_items 加载）
 
-        Phase 1 修复：CT/MR/DR 只加载 V3.8.2 标准库用于匹配，
-        V4.0.0 仅供显示使用，不参与标准匹配，避免 standard_data_conflict。
-        同时只加载带星号(*)的标准项，因为 V3.8.2 内部也存在重复编码。
+        标准口径（决策 2026-09-11）：**只使用 v3.8.2**。
+        - ``version`` 统一用 ``UPPER(TRIM(version)) = 'V3.8.2'`` 比较（历史大小写混写）。
+          ``v4.0.0`` 与 V3.0/V3.5/V3.6/V3.7/V3.8/v2.0 等历史版本一律**不参与匹配**。
+        - 名称的 ``*`` 前缀已由迁移 20260911_0100 去除，不再作为权威标记；
+          历史实现用 ``item_name LIKE '* %'`` 过滤，把 443 条 US 与 30 条
+          DSA/OCT/SPECT 误挡在匹配之外（见 analysis/20260911/REPORT.md 缺陷②）。
         """
-        # Bug #5 修复说明：精确名称索引需要加载所有活跃版本用于名称查找，
-        # 版本过滤由 _match_exact_standard_name 中的逻辑处理（优先 v3.8.2）
-        # 这里不应该在 SQL 层过滤，否则会导致精确名称匹配失效
+        # 精确名称索引与结构化查找使用同一版本口径，都是 v3.8.2。
+        # 旧实现让精确索引覆盖全部活跃版本，导致同名跨版本并存 → 433 处
+        # exact_name_collision（缺陷①），本次一并收敛。
         exact_result = await conn.execute(text(
             "SELECT modality, version, item_code, item_name "
             "FROM standard_check_items "
-            "WHERE is_active = true"
+            "WHERE is_active = true "
+            "  AND UPPER(TRIM(version)) = 'V3.8.2'"
         ))
         exact_rows = exact_result.fetchall()
 
@@ -207,8 +211,7 @@ class RuleDataLoader:
             "FROM standard_check_items "
             "WHERE is_active = true "
             # Bug #7 修复：版本字符串大小写不一致，使用 UPPER 统一比较
-            "  AND UPPER(TRIM(version)) = 'V3.8.2' "
-            "  AND item_name LIKE '* %'"
+            "  AND UPPER(TRIM(version)) = 'V3.8.2'"
         ))
         rows = result.fetchall()
 
@@ -234,9 +237,9 @@ class RuleDataLoader:
 
         df_all.fillna("", inplace=True)
 
-        # 精确名称索引覆盖所有有效版本/模态；NLP 结构化查找仍只使用当前
-        # V3.8.2 视图。旧版或非 ACR 标准项可按唯一全名安全命中，
-        # 同名多编码则由 orchestrator 显式返回 ambiguous。
+        # 精确名称索引覆盖当前版本（v3.8.2）全部模态。同名多编码不再跨版本
+        # 叠加（旧实现加载全部历史版本，产生 433 处伪冲突），只剩同版本内
+        # 真实重复，交由 orchestrator 用编码优先级收敛或放行到下游。
         self.standard_name_index = {}
         for modality, version, item_code, item_name in exact_rows:
             key = normalize_standard_name(item_name)

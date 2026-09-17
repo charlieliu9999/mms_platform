@@ -409,6 +409,21 @@ class USSpectPetMatcher:
     app.config.database，可被 backend / 独立 match-service 任意入口复用。
     """
 
+    # 扫描方式兼容族：同一技术不同措辞，仅在精确扫描方式查空时按族内顺序回退。
+    #
+    # '常规' 是 _extract_us_scan 在**没有任何方式关键词命中**时的默认值，
+    # 因此它同时代表“标准就是常规”与“输入未指明方式”两种含义。
+    # 当 (部位, 常规) 查不到时，回退到多普勒族，以便捕获
+    # 「US深静脉多普勒超声检查」→「US深静脉超声检查(scan=多普勒超声)」这类
+    # 标准库措辞与医嘱不一致的情况。
+    SCAN_FAMILY = {
+        '常规': ('常规', '多普勒超声', '彩色多普勒', '频谱多普勒'),
+        '彩色多普勒': ('彩色多普勒', '多普勒超声', '频谱多普勒', '常规'),
+        '多普勒超声': ('多普勒超声', '彩色多普勒', '频谱多普勒', '常规'),
+        '频谱多普勒': ('频谱多普勒', '多普勒超声', '彩色多普勒', '常规'),
+    }
+
+
     def __init__(self, engine=None):
         # engine 可注入；为空时懒回退到 backend 的 app.config.database.engine，
         # 保持现有进程内调用零改动
@@ -447,12 +462,18 @@ class USSpectPetMatcher:
                 "engine 参数必须提供（Phase A 独立化后无 app.config.database 依赖）"
             )
         async with self._engine.connect() as conn:
+            # 标准口径（决策 2026-09-11）：只用 v3.8.2。
+            # 旧实现不加版本过滤，会把历史版本一并装入查询集；DSA 尤为严重——
+            # v3.8.2 的 28 条因 body_part_l2 为空而查不到，实际命中的全是
+            # v2.0 的内部编码（E00x0AxxBxxxx），与「只用 v3.8.2」相悖。
+            # 配套迁移 20260911_0200 已回填 v3.8.2 行的 body_part_l2。
             result = await conn.execute(text(
                 "SELECT item_code, item_name, modality, body_part_l1, body_part_l2, "
                 "body_part_l3, scan_method "
                 "FROM standard_check_items "
                 "WHERE modality IN ('US', 'SPECT', 'PET/CT', 'PET/MR', 'OCT', 'DSA') "
-                "AND is_active = true "
+                "  AND is_active = true "
+                "  AND UPPER(TRIM(version)) = 'V3.8.2' "
                 "ORDER BY modality, item_code"
             ))
             rows = result.fetchall()
@@ -755,6 +776,25 @@ class USSpectPetMatcher:
             if not result.empty:
                 self._last_tier = 'degraded'
                 logger.info(f"[US] 扫描方式降级: {scan_method}→常规 (body={body_l2})")
+
+        # 扫描方式同族回退：彩色多普勒/多普勒超声/频谱多普勒 描述的是同一类
+        # 多普勒技术。标准库与医嘱对同一检查的措辞常常不一致（标准写
+        # “多普勒超声”、医嘱写“彩色多普勒”），应在同族内先回退，而不是直接
+        # 降到“常规”——否则会漏掉权威项，甚至错误命中“常规”下的无关项
+        # （例：深静脉医嘱被降级后错配到双上肢动脉常规超声）。
+        if result.empty:
+            for alt in self.SCAN_FAMILY.get(scan_method, ()):
+                if alt == scan_method:
+                    continue
+                mask = (df['body_part_l2'] == body_l2) & (df['scan_method'] == alt)
+                alt_result = df[mask]
+                if not alt_result.empty:
+                    result = alt_result
+                    self._last_tier = 'degraded'
+                    logger.info(
+                        f"[US] 扫描方式同族回退: {scan_method}→{alt} (body={body_l2})"
+                    )
+                    break
 
         # 多候选不能标记 exact；候选收敛由 _match_us 的 _select_best_candidate
         # 统一处理（按输入精确选择单个标准项），此处返回全部候选。
