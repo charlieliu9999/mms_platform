@@ -6,6 +6,7 @@ import {
 import {
   SearchOutlined, CheckCircleFilled, ExclamationCircleOutlined, ThunderboltOutlined,
   ExperimentOutlined, PlayCircleOutlined, ReloadOutlined, DatabaseOutlined, AimOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import {
   matchAPI, adminAPI, MatchResult, ProcedureItem, ProcedureMatchResult,
@@ -307,6 +308,80 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
   const matchAllFiltered = () => runBatch(filtered.map((it) => it.id));
   const matchAllUnmatched = () => runBatch(filtered.filter((it) => getStatus(it) === 'unmatched').map((it) => it.id));
 
+  const exportToCSV = () => {
+    if (filtered.length === 0) {
+      message.warning('没有可导出的数据');
+      return;
+    }
+
+    // CSV 表头
+    const headers = [
+      'ID',
+      '源项目名称',
+      'Semantic ID',
+      '模态',
+      '有效模态',
+      '状态',
+      'Tier',
+      '匹配标准项代码',
+      '匹配标准项名称',
+      '归因原因',
+      '详细说明',
+    ];
+
+    // 生成 CSV 数据行
+    const rows = filtered.map((item) => {
+      const status = getStatus(item);
+      const res = matchResults[item.id];
+      const standards = res?.standards || item.last_standards || [];
+      const tier = res?.tier || item.last_tier || '';
+      const effectiveModality = res?.effective_modality || item.last_effective_modality || '';
+      const reasonCode = res?.reason_code || item.last_reason_code || (status === 'unmatched' ? item.um_reason : '');
+      const detail = res?.detail || item.last_detail || '';
+
+      // 标准项代码和名称（多个用分号分隔）
+      const standardCodes = standards.map(s => s.code).join('; ');
+      const standardNames = standards.map(s => s.name).join('; ');
+
+      return [
+        item.id,
+        `"${item.name_zh.replace(/"/g, '""')}"`, // 转义双引号
+        item.semantic_id,
+        item.modality,
+        effectiveModality,
+        STATUS_META[status].label,
+        tier,
+        standardCodes,
+        `"${standardNames.replace(/"/g, '""')}"`,
+        reasonCode ? (REASON_META[reasonCode]?.label || reasonCode) : '',
+        `"${detail.replace(/"/g, '""')}"`,
+      ];
+    });
+
+    // 构建 CSV 内容
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(',')),
+    ].join('\n');
+
+    // 添加 BOM 以支持中文
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+
+    // 下载文件
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+    link.setAttribute('download', `匹配结果_${modalityFilter || '全部'}_${timestamp}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    message.success(`已导出 ${filtered.length} 条数据`);
+  };
+
   const modalityOptions = useMemo(() => {
     const opts = Object.entries(modalityStats)
       .sort((a, b) => b[1].total - a[1].total)
@@ -462,6 +537,9 @@ const MatchTest: React.FC<MatchTestProps> = ({ initialTab = 'items' }) => {
               allowClear
             />
             <div className="flex-1" />
+            <Button icon={<DownloadOutlined />} onClick={exportToCSV} disabled={batchRunning || filtered.length === 0}>
+              导出数据
+            </Button>
             <Button icon={<ReloadOutlined />} onClick={loadItems} disabled={batchRunning}>刷新</Button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
