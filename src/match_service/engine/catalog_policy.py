@@ -35,8 +35,29 @@ MODALITY_CATALOG_VERSIONS = {
     "DSA": "v2.0", "OCT": "v2.0", "SPECT": "v2.0",
 }
 
-# Static internal policy, never interpolated from request input.
+# Some deployments retain the same modality catalog under its historical
+# v3.8.2 label. Use it only when the entire active canonical catalog is absent;
+# never fill individual canonical gaps from another version.
+LEGACY_CATALOG_MODALITIES = frozenset({"US", "PET/CT", "PET/MR", "DSA", "OCT", "SPECT"})
+
+
+def _catalog_clause(modality: str, canonical_version: str) -> str:
+    canonical = f"UPPER(TRIM(version)) = '{canonical_version.upper()}'"
+    if modality in LEGACY_CATALOG_MODALITIES:
+        canonical = (
+            f"({canonical} OR (UPPER(TRIM(version)) = 'V3.8.2' AND NOT EXISTS ("
+            "SELECT 1 FROM standard_check_items AS primary_catalog "
+            "WHERE primary_catalog.is_active = true "
+            f"AND primary_catalog.modality = '{modality}' "
+            f"AND UPPER(TRIM(primary_catalog.version)) = '{canonical_version.upper()}'"
+            ")))"
+        )
+    return f"(modality = '{modality}' AND {canonical})"
+
+
+# Static internal policy, never interpolated from request input. Both the
+# exact-name loader and keyword loader use this identical selection predicate.
 CATALOG_POLICY_SQL = "(" + " OR ".join(
-    f"(modality = '{modality}' AND UPPER(TRIM(version)) = '{version.upper()}')"
+    _catalog_clause(modality, version)
     for modality, version in MODALITY_CATALOG_VERSIONS.items()
 ) + ")"
