@@ -25,6 +25,7 @@ test_backend:
   only:
     - main
     - develop
+    - merge_requests
   allow_failure: true
   tags:
     - shell
@@ -40,6 +41,7 @@ test_frontend:
   only:
     - main
     - develop
+    - merge_requests
   allow_failure: true
   tags:
     - shell
@@ -48,6 +50,9 @@ test_frontend:
 # ========== 部署到生产环境 ==========
 deploy_production:
   stage: deploy
+  # Merging code must not deploy; production release requires a separate action.
+  when: manual
+  allow_failure: true
   script:
     - echo "==> Deploying MMS Platform to ${VPS_HOST}:${DEPLOY_PATH}"
 
@@ -133,8 +138,8 @@ deploy_production:
         "curl -sf http://localhost:${FRONTEND_PORT}/ && echo ' ✓ Frontend accessible'"
 
     - echo "==> Deployment successful!"
-    - echo "Backend: http://${VPS_HOST}:${BACKEND_PORT}"
-    - echo "Frontend: http://${VPS_HOST}:${FRONTEND_PORT}"
+    - 'echo "Backend: http://${VPS_HOST}:${BACKEND_PORT}"'
+    - 'echo "Frontend: http://${VPS_HOST}:${FRONTEND_PORT}"'
 
   only:
     - main

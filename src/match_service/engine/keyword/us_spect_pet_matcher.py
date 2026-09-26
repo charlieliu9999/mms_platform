@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from sqlalchemy import text
+from ..catalog_policy import CATALOG_POLICY_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -454,6 +455,8 @@ class USSpectPetMatcher:
         self._last_tier: str = 'exact'
         self._last_reason: str = ''
         self._last_has_entity: Optional[bool] = False
+        self._last_unresolved_components: List[str] = []
+        self._standard_versions: dict = {}
 
     async def initialize(self):
         # Phase A: 独立化后 engine 必须外部注入
@@ -462,26 +465,27 @@ class USSpectPetMatcher:
                 "engine 参数必须提供（Phase A 独立化后无 app.config.database 依赖）"
             )
         async with self._engine.connect() as conn:
-            # 标准口径（决策 2026-09-11）：只用 v3.8.2。
-            # 旧实现不加版本过滤，会把历史版本一并装入查询集；DSA 尤为严重——
-            # v3.8.2 的 28 条因 body_part_l2 为空而查不到，实际命中的全是
-            # v2.0 的内部编码（E00x0AxxBxxxx），与「只用 v3.8.2」相悖。
-            # 配套迁移 20260911_0200 已回填 v3.8.2 行的 body_part_l2。
+            # A fixed catalog per modality restores US/nuclear catalogs without
+            # mixing historical versions into the same candidate set.
             result = await conn.execute(text(
                 "SELECT item_code, item_name, modality, body_part_l1, body_part_l2, "
-                "body_part_l3, scan_method "
+                "body_part_l3, scan_method, version "
                 "FROM standard_check_items "
                 "WHERE modality IN ('US', 'SPECT', 'PET/CT', 'PET/MR', 'OCT', 'DSA') "
                 "  AND is_active = true "
-                "  AND UPPER(TRIM(version)) = 'V3.8.2' "
+                "  AND " + CATALOG_POLICY_SQL + " "
                 "ORDER BY modality, item_code"
             ))
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=[
                 'item_code', 'item_name', 'modality', 'body_part_l1',
-                'body_part_l2', 'body_part_l3', 'scan_method'
+                'body_part_l2', 'body_part_l3', 'scan_method', 'version'
             ])
             df.fillna('', inplace=True)
+            self._standard_versions = {}
+            for _, standard in df.iterrows():
+                key = (str(standard['item_code']), str(standard['item_name']), standard['modality'])
+                self._standard_versions.setdefault(key, set()).add(standard['version'])
 
             self._us_items = pd.DataFrame(df[df['modality'] == 'US'].values, columns=df.columns)
             self._spect_items = pd.DataFrame(df[df['modality'] == 'SPECT'].values, columns=df.columns)
@@ -572,6 +576,10 @@ class USSpectPetMatcher:
     def is_ready(self) -> bool:
         return self._initialized
 
+    def standard_version(self, code: str, name: str, modality: str) -> Optional[str]:
+        versions = self._standard_versions.get((code, name, modality), set())
+        return next(iter(versions)) if len(versions) == 1 and '' not in versions else None
+
     def match(self, order_name: str, modality: str) -> List[Tuple[str, str]]:
         """匹配单条医嘱，并通过 ``_last_*`` 暴露结构化诊断。
 
@@ -580,6 +588,7 @@ class USSpectPetMatcher:
         self._last_tier = 'exact'
         self._last_reason = ''
         self._last_has_entity = False
+        self._last_unresolved_components = []
 
         if not self._initialized:
             return self._failure('engine_not_ready')
@@ -598,7 +607,32 @@ class USSpectPetMatcher:
             return self._failure('unsupported_modality')
 
         if result:
-            self._last_reason = ''
+            if (modality == 'US' and re.search(r'血管|动脉|静脉|多普勒', order_name)
+                    and not re.search(r'包块|肿块', order_name)):
+                safe = [p for p in result if not re.search(r'包块|肿块', p[1])]
+                if len(safe) != len(result):
+                    self._last_unresolved_components = ['血管/多普勒检查']
+                    result = safe
+            if modality == 'SPECT' and '灌注' in order_name:
+                safe = [p for p in result if '灌注' in p[1]]
+                if len(safe) != len(result):
+                    self._last_unresolved_components = ['灌注显像']
+                    result = safe
+            if not result and self._last_unresolved_components:
+                return self._failure('standard_semantic_conflict', True)
+            if self._last_unresolved_components:
+                self._last_tier = 'ambiguous'
+                self._last_reason = 'standard_semantic_conflict'
+            elif modality == 'SPECT' and len(result) > 1:
+                self._last_tier = 'ambiguous'
+                self._last_reason = 'multiple_technical_candidates'
+            elif (modality == 'SPECT' and '心肌灌注' in order_name
+                  and not any(q in order_name for q in ('负荷', '静息', '平面', '断层'))
+                  and any(any(q in name for q in ('负荷', '静息', '平面', '断层')) for _, name in result)):
+                self._last_tier = 'ambiguous'
+                self._last_reason = 'unspecified_technical_qualifier'
+            if self._last_tier != 'ambiguous':
+                self._last_reason = ''
             self._last_has_entity = True
         elif not self._last_reason:
             self._last_reason = 'lexicon_gap'

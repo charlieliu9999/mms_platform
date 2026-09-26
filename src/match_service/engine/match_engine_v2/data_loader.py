@@ -12,6 +12,7 @@ import jieba
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
+from ..catalog_policy import CATALOG_POLICY_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class RuleDataLoader:
         self.df_body_disamb: pd.DataFrame = pd.DataFrame()
         self.df_standard: Dict[str, Dict[str, pd.DataFrame]] = {}
         self.standard_name_index: Dict[str, List[dict]] = {}
+        self.us_standard_name_alias_index: Dict[str, List[dict]] = {}
         self.body_generalization_map: Dict = {}  # 部位泛化映射资产
 
     async def initialize(self):
@@ -186,21 +188,16 @@ class RuleDataLoader:
     async def _load_standard_table(self, conn):
         """加载标准项目表（统一从 standard_check_items 加载）
 
-        标准口径（决策 2026-09-11）：**只使用 v3.8.2**。
-        - ``version`` 统一用 ``UPPER(TRIM(version)) = 'V3.8.2'`` 比较（历史大小写混写）。
-          ``v4.0.0`` 与 V3.0/V3.5/V3.6/V3.7/V3.8/v2.0 等历史版本一律**不参与匹配**。
-        - 名称的 ``*`` 前缀已由迁移 20260911_0100 去除，不再作为权威标记；
-          历史实现用 ``item_name LIKE '* %'`` 过滤，把 443 条 US 与 30 条
-          DSA/OCT/SPECT 误挡在匹配之外（见 analysis/20260911/REPORT.md 缺陷②）。
+        NLP 模态仍使用 v3.8.2；关键词模态使用各自目录版本。
+        精确索引与关键词引擎共享固定模态政策，不混入全部历史版本。
+        名称展示前缀不作为有效性过滤条件。
         """
-        # 精确名称索引与结构化查找使用同一版本口径，都是 v3.8.2。
-        # 旧实现让精确索引覆盖全部活跃版本，导致同名跨版本并存 → 433 处
-        # exact_name_collision（缺陷①），本次一并收敛。
+        # 精确索引必须覆盖关键词模态各自的标准目录版本。
         exact_result = await conn.execute(text(
             "SELECT modality, version, item_code, item_name "
             "FROM standard_check_items "
             "WHERE is_active = true "
-            "  AND UPPER(TRIM(version)) = 'V3.8.2'"
+            "  AND " + CATALOG_POLICY_SQL
         ))
         exact_rows = exact_result.fetchall()
 
@@ -237,20 +234,23 @@ class RuleDataLoader:
 
         df_all.fillna("", inplace=True)
 
-        # 精确名称索引覆盖当前版本（v3.8.2）全部模态。同名多编码不再跨版本
-        # 叠加（旧实现加载全部历史版本，产生 433 处伪冲突），只剩同版本内
-        # 真实重复，交由 orchestrator 用编码优先级收敛或放行到下游。
+        # 每个模态只有固定目录版本，避免跨版本同名形成伪冲突。
         self.standard_name_index = {}
+        self.us_standard_name_alias_index = {}
         for modality, version, item_code, item_name in exact_rows:
             key = normalize_standard_name(item_name)
             if not key:
                 continue
-            self.standard_name_index.setdefault(key, []).append({
+            candidate = {
                 "code": item_code or "",
                 "name": item_name or "",
                 "modality": str(modality or "").upper(),
                 "version": version or "",
-            })
+            }
+            self.standard_name_index.setdefault(key, []).append(candidate)
+            if candidate["modality"] == "US":
+                alias = key[2:] if key.startswith("US") else key
+                self.us_standard_name_alias_index.setdefault(alias, []).append(candidate)
         for candidates in self.standard_name_index.values():
             candidates.sort(key=lambda item: (item["modality"], item["code"]))
         logger.info(

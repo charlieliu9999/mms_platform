@@ -415,6 +415,7 @@ class StandardLookupService:
                 candidate_hits += 1
                 node.standard_check_name.append(name)
                 node.standard_check_code.append(code)
+                node.standard_check_version.append(row.get('version') or None)
             # 该节点所有候选均被其他节点去重覆盖（如"颞骨及头颈部血管"的
             # 头颈部动脉+三维重建影子节点）：语义已由组合结果覆盖，不算未匹配。
             if not node.standard_check_name and candidate_hits:
@@ -432,6 +433,17 @@ class StandardLookupService:
                         dup_set.add(name)
                         node.standard_check_name.append(name)
                         node.standard_check_code.append(code)
+                        actual_rows = df_std[
+                            (df_std['checkitem_code'] == code) &
+                            (df_std['checkitem_name'] == name)
+                        ]
+                        actual_versions = (
+                            actual_rows['version'].dropna().unique()
+                            if 'version' in actual_rows else []
+                        )
+                        node.standard_check_version.append(
+                            actual_versions[0] if len(actual_versions) == 1 else None
+                        )
 
     def _query_standard_table(self, df: pd.DataFrame, modality: str,
                               bodies: List[str], process_type: str,

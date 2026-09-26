@@ -35,9 +35,16 @@ class MatchCache(Base):
     )
 
     @staticmethod
-    def compute_hash(text: str, modality: str) -> str:
+    def compute_hash(
+        text: str, modality: str, requested_version: Optional[str] = None
+    ) -> str:
         normalized = text.strip().lower().replace(" ", "")
         raw = f"{normalized}|{modality.upper()}"
+        if requested_version is not None:
+            # A new namespace leaves historical/manual rows intact. The rule
+            # fingerprint identifies data; this marker identifies the output contract.
+            selector = requested_version.strip().lower()
+            raw += f"|standard-version-v1|{selector}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def get_result(self) -> dict:
