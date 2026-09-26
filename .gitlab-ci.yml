@@ -25,6 +25,7 @@ test_backend:
   only:
     - main
     - develop
+    - merge_requests
   allow_failure: true
   tags:
     - shell
@@ -40,6 +41,7 @@ test_frontend:
   only:
     - main
     - develop
+    - merge_requests
   allow_failure: true
   tags:
     - shell
@@ -136,8 +138,8 @@ deploy_production:
         "curl -sf http://localhost:${FRONTEND_PORT}/ && echo ' ✓ Frontend accessible'"
 
     - echo "==> Deployment successful!"
-    - echo "Backend: http://${VPS_HOST}:${BACKEND_PORT}"
-    - echo "Frontend: http://${VPS_HOST}:${FRONTEND_PORT}"
+    - 'echo "Backend: http://${VPS_HOST}:${BACKEND_PORT}"'
+    - 'echo "Frontend: http://${VPS_HOST}:${FRONTEND_PORT}"'
 
   only:
     - main
