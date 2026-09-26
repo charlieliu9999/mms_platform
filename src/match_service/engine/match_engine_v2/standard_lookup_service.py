@@ -220,28 +220,28 @@ class StandardLookupService:
         }
         return abbreviation_map.get(scan, scan)
 
-    def _supplement_base_scans(self, df_std: pd.DataFrame, 
-                               bodies: List[str], 
+    def _supplement_base_scans(self, df_std: pd.DataFrame,
+                               bodies: List[str],
                                scans: List[str],
                                post_processing: List[str],
-                               dup_set: Set[str]) -> List[Tuple[str, str]]:
+                               dup_set: Set[str]) -> List[Tuple[str, str, str]]:
         """
         修复4: 为后处理项补充基础扫描项
-        
+
         当匹配结果中包含后处理项（三维重建/MPR等）时，自动补充对应的
         基础扫描项（平扫/增强）。例如：
         - CT胸部+腹部+盆腔三维重建 → 补充 CT胸部平扫 + CT腹部平扫 + CT盆腔平扫
         - CT全腹部(平扫)+CT三维重建 → 补充 CT全腹部平扫
-        
+
         Args:
             df_std: 标准表DataFrame
             bodies: 部位列表
             scans: 扫描方式列表（平扫/增强等）
             post_processing: 后处理方式列表（三维重建/MPR等）
             dup_set: 已匹配项集合（用于去重）
-        
+
         Returns:
-            [(标准项名称, 标准项编码), ...]
+            [(标准项名称, 标准项编码, 版本), ...]
         """
         results = []
         
@@ -268,10 +268,11 @@ class StandardLookupService:
             for _, row in matches.iterrows():
                 name = row['checkitem_name']
                 code = row['checkitem_code']
-                
+                version = row.get('version', '')
+
                 # 跳过已存在的项
                 if name not in dup_set:
-                    results.append((name, code))
+                    results.append((name, code, version))
         
         return results
 
@@ -391,7 +392,8 @@ class StandardLookupService:
             for _, row in candidates.iterrows():
                 name = row['checkitem_name']
                 code = row['checkitem_code']
-                
+                version = row.get('version', '')
+
                 # 修复1: 过滤跨模态标准项（数据质量问题防御）
                 # 检查标准项名称前缀是否与查询模态一致
                 # 例如：MR查询不应返回"CT全脊柱"这样的项目
@@ -415,7 +417,7 @@ class StandardLookupService:
                 candidate_hits += 1
                 node.standard_check_name.append(name)
                 node.standard_check_code.append(code)
-                node.standard_check_version.append(row.get('version') or None)
+                node.standard_check_version.append(version)
             # 该节点所有候选均被其他节点去重覆盖（如"颞骨及头颈部血管"的
             # 头颈部动脉+三维重建影子节点）：语义已由组合结果覆盖，不算未匹配。
             if not node.standard_check_name and candidate_hits:
@@ -428,22 +430,12 @@ class StandardLookupService:
             if modality in ('CT', 'MR') and post_vals and bodies:
                 base_scans = self._supplement_base_scans(
                     df_std, bodies, process_vals, post_vals, dup_set)
-                for name, code in base_scans:
+                for name, code, version in base_scans:
                     if name not in dup_set:
                         dup_set.add(name)
                         node.standard_check_name.append(name)
                         node.standard_check_code.append(code)
-                        actual_rows = df_std[
-                            (df_std['checkitem_code'] == code) &
-                            (df_std['checkitem_name'] == name)
-                        ]
-                        actual_versions = (
-                            actual_rows['version'].dropna().unique()
-                            if 'version' in actual_rows else []
-                        )
-                        node.standard_check_version.append(
-                            actual_versions[0] if len(actual_versions) == 1 else None
-                        )
+                        node.standard_check_version.append(version)
 
     def _query_standard_table(self, df: pd.DataFrame, modality: str,
                               bodies: List[str], process_type: str,

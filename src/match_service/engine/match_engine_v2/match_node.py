@@ -282,7 +282,7 @@ class MatchNode:
         - 如果提供 usage_stats，按使用频率降序 → 字母序排序
         - 否则按字母序排序（保持向后兼容）
         """
-        # 组合 code 和 name
+        # 组合 code, name 和 version（健壮处理可能的长度不匹配）
         results = [
             (code, name, self.standard_check_version[i]
              if i < len(self.standard_check_version) else None)
@@ -300,7 +300,7 @@ class MatchNode:
         return {
             'raw': self.raw_str,
             'standard': [
-                {'code': c, 'name': n, **({'version': v} if v else {})}
+                {'code': c, 'name': n, 'std_version': v}
                 for c, n, v in results
             ],
         }

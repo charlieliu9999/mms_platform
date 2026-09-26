@@ -102,6 +102,25 @@ class MatchDispatcher:
 
         return normalized
 
+    def _format_result(self, result: dict) -> None:
+        """
+        统一格式化匹配结果：补充 version 字段、去除名称中的星号
+
+        在所有匹配结果返回前调用此方法，确保输出格式一致。
+        修改是原地的（in-place），不返回新对象。
+        """
+        # 1. 处理 data 数组中的每个标准项
+        for datum in result.get("data", []) or []:
+            for standard in datum.get("standard") or []:
+                # 去除名称中的星号
+                if "name" in standard and standard["name"]:
+                    standard["name"] = standard["name"].replace("*", "").strip()
+
+                # 补充 version 字段（如果有 std_version）
+                if "std_version" in standard and "version" not in standard:
+                    # 版本号统一小写
+                    standard["version"] = standard["std_version"].lower()
+
     @staticmethod
     def _apply_result_review_policy(
         result: dict,
@@ -260,6 +279,8 @@ class MatchDispatcher:
             if cached.get("tier") in {"none", "ambiguous"}:
                 await self._record_feedback(text, effective_modality, cached)
             logger.debug(f"[Dispatcher] L1 命中: {text[:30]}...")
+            # 统一格式化输出：补 version、去星号
+            self._format_result(cached)
             return cached
 
         # ── L2: 算法引擎 ──
@@ -309,6 +330,9 @@ class MatchDispatcher:
 
         result["_cache_hit"] = False
         result["_tier"] = tier
+
+        # 统一格式化输出：补 version、去星号
+        self._format_result(result)
         return result
 
     @staticmethod

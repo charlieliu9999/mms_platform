@@ -465,8 +465,9 @@ class USSpectPetMatcher:
                 "engine 参数必须提供（Phase A 独立化后无 app.config.database 依赖）"
             )
         async with self._engine.connect() as conn:
-            # A fixed catalog per modality restores US/nuclear catalogs without
-            # mixing historical versions into the same candidate set.
+            # 合并策略：使用 CATALOG_POLICY_SQL（支持多版本） + 版本优先级排序
+            # 支持所有版本：v1.1 (US/PET), v2.0 (SPECT/OCT/DSA), v3.8.2, v4.0.0
+            # 优先级顺序：v3.8.2 > v1.1 > v2.0 > v4.0.0
             result = await conn.execute(text(
                 "SELECT item_code, item_name, modality, body_part_l1, body_part_l2, "
                 "body_part_l3, scan_method, version "
@@ -474,7 +475,15 @@ class USSpectPetMatcher:
                 "WHERE modality IN ('US', 'SPECT', 'PET/CT', 'PET/MR', 'OCT', 'DSA') "
                 "  AND is_active = true "
                 "  AND " + CATALOG_POLICY_SQL + " "
-                "ORDER BY modality, item_code"
+                "ORDER BY modality, "
+                "  CASE UPPER(TRIM(version)) "
+                "    WHEN 'V3.8.2' THEN 1 "
+                "    WHEN 'V1.1' THEN 2 "
+                "    WHEN 'V2.0' THEN 3 "
+                "    WHEN 'V4.0.0' THEN 4 "
+                "    ELSE 99 "
+                "  END, "
+                "  item_code"
             ))
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=[
@@ -580,10 +589,10 @@ class USSpectPetMatcher:
         versions = self._standard_versions.get((code, name, modality), set())
         return next(iter(versions)) if len(versions) == 1 and '' not in versions else None
 
-    def match(self, order_name: str, modality: str) -> List[Tuple[str, str]]:
+    def match(self, order_name: str, modality: str) -> List[Tuple[str, str, str]]:
         """匹配单条医嘱，并通过 ``_last_*`` 暴露结构化诊断。
 
-        返回值仍为 ``[(item_code, item_name), ...]``，避免破坏旧版和批量接口。
+        返回值为 ``[(item_code, item_name, version), ...]``，包含版本信息。
         """
         self._last_tier = 'exact'
         self._last_reason = ''
@@ -639,13 +648,13 @@ class USSpectPetMatcher:
         return result
 
     def _failure(self, reason: str,
-                 has_entity: Optional[bool] = None) -> List[Tuple[str, str]]:
-        """记录无结果原因，同时保持旧 List 返回协议。"""
+                 has_entity: Optional[bool] = None) -> List[Tuple[str, str, str]]:
+        """记录无结果原因，同时保持 List 返回协议。"""
         self._last_reason = reason
         self._last_has_entity = has_entity
         return []
 
-    def _query_result(self, pairs: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+    def _query_result(self, pairs: List[Tuple[str, str, str]]) -> List[Tuple[str, str, str]]:
         """标记已识别医学实体后的标准库查询结果。"""
         self._last_has_entity = True
         if not pairs:
@@ -654,7 +663,7 @@ class USSpectPetMatcher:
 
     # ─── US 匹配 ──────────────────────────────────────────────────────────────
 
-    def _match_us(self, order_name: str) -> List[Tuple[str, str]]:
+    def _match_us(self, order_name: str) -> List[Tuple[str, str, str]]:
         # 排除特殊用途。支气管镜等属于非影像自动匹配范围，而不是词库缺失。
         if any(marker in order_name for marker in self._us_unmatchable):
             return self._failure('excluded_non_imaging')
@@ -707,7 +716,7 @@ class USSpectPetMatcher:
 
     @staticmethod
     def _select_best_candidate(order_name: str,
-                               pairs: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+                               pairs: List[Tuple[str, str, str]]) -> List[Tuple[str, str, str]]:
         """从多候选中选择最匹配输入的单个标准项。
 
         规则：
@@ -797,7 +806,7 @@ class USSpectPetMatcher:
                     return scan
         return '常规'
 
-    def _query_us(self, body_l2: str, scan_method: str) -> List[Tuple[str, str]]:
+    def _query_us(self, body_l2: str, scan_method: str) -> List[Tuple[str, str, str]]:
         df = self._us_items
         mask = (df['body_part_l2'] == body_l2) & (df['scan_method'] == scan_method)
         result = df[mask]
@@ -835,11 +844,11 @@ class USSpectPetMatcher:
         if len(result) > 1:
             self._last_tier = 'degraded'
 
-        return [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
+        return [(str(r['item_code']), str(r['item_name']), str(r['version'])) for _, r in result.iterrows()]
 
     # ─── SPECT 匹配 ───────────────────────────────────────────────────────────
 
-    def _match_spect(self, order_name: str) -> List[Tuple[str, str]]:
+    def _match_spect(self, order_name: str) -> List[Tuple[str, str, str]]:
         # H1 修复：排除介入/科研类医嘱（与 US/DSA 保持一致）
         if any(marker in order_name for marker in self._spect_unmatchable):
             return self._failure('excluded_non_imaging')
@@ -868,28 +877,28 @@ class USSpectPetMatcher:
                     return scan
         return None
 
-    def _query_spect(self, body_l2: str, scan_method: Optional[str]) -> List[Tuple[str, str]]:
+    def _query_spect(self, body_l2: str, scan_method: Optional[str]) -> List[Tuple[str, str, str]]:
         df = self._spect_items
         if scan_method:
             mask = (df['body_part_l2'] == body_l2) & (df['scan_method'] == scan_method)
             result = df[mask]
             if not result.empty:
-                return [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
+                return [(str(r['item_code']), str(r['item_name']), str(r['version'])) for _, r in result.iterrows()]
 
         mask = (df['body_part_l2'] == body_l2)
         result = df[mask]
         if result.empty:
             return []
-        # H4 修复：返回所有匹配结果，不再静默丢弃
+        # H4 修复:返回所有匹配结果，不再静默丢弃
         # 多结果时标记 degraded，提示上层需人工确认
         if len(result) > 1:
             self._last_tier = 'degraded'
             logger.info(f"[SPECT] 多结果({len(result)}条): body={body_l2}, scan={scan_method}")
-        return [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
+        return [(str(r['item_code']), str(r['item_name']), str(r['version'])) for _, r in result.iterrows()]
 
     # ─── PET 匹配 ─────────────────────────────────────────────────────────────
 
-    def _match_pet(self, order_name: str, modality: str) -> List[Tuple[str, str]]:
+    def _match_pet(self, order_name: str, modality: str) -> List[Tuple[str, str, str]]:
         # H1 修复：排除科研/介入类医嘱
         if any(marker in order_name for marker in self._pet_unmatchable):
             return self._failure('excluded_non_imaging')
@@ -902,7 +911,7 @@ class USSpectPetMatcher:
 
         mask = df['body_part_l2'] == body_l2
         result = df[mask]
-        pairs = [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
+        pairs = [(str(r['item_code']), str(r['item_name']), str(r['version'])) for _, r in result.iterrows()]
         return self._query_result(pairs)
 
     def _extract_pet_body(self, order_name: str) -> Optional[str]:
@@ -928,7 +937,7 @@ class USSpectPetMatcher:
 
     # ─── OCT 匹配 ─────────────────────────────────────────────────────────────
 
-    def _match_oct(self, order_name: str) -> List[Tuple[str, str]]:
+    def _match_oct(self, order_name: str) -> List[Tuple[str, str, str]]:
         """OCT 匹配：提取部位关键词 → 查 body_part_l2"""
         # H1 修复：排除介入/科研类医嘱
         if any(marker in order_name for marker in self._oct_unmatchable):
@@ -950,16 +959,16 @@ class USSpectPetMatcher:
                     return body_l2
         return None
 
-    def _query_oct(self, body_l2: str) -> List[Tuple[str, str]]:
+    def _query_oct(self, body_l2: str) -> List[Tuple[str, str, str]]:
         """查询 OCT 标准表"""
         df = self._oct_items
         mask = (df['body_part_l2'] == body_l2)
         result = df[mask]
-        return [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
+        return [(str(r['item_code']), str(r['item_name']), str(r['version'])) for _, r in result.iterrows()]
 
     # ─── DSA 匹配 ─────────────────────────────────────────────────────────────
 
-    def _match_dsa(self, order_name: str) -> List[Tuple[str, str]]:
+    def _match_dsa(self, order_name: str) -> List[Tuple[str, str, str]]:
         """DSA 匹配：排除介入治疗，提取部位关键词 → 查 body_part_l2"""
         if any(marker in order_name for marker in self._dsa_unmatchable):
             return self._failure('excluded_intervention')
@@ -980,16 +989,16 @@ class USSpectPetMatcher:
                     return body_l2
         return None
 
-    def _query_dsa(self, body_l2: str) -> List[Tuple[str, str]]:
+    def _query_dsa(self, body_l2: str) -> List[Tuple[str, str, str]]:
         """查询 DSA 标准表"""
         df = self._dsa_items
         mask = (df['body_part_l2'] == body_l2)
         result = df[mask]
-        return [(str(r['item_code']), str(r['item_name'])) for _, r in result.iterrows()]
+        return [(str(r['item_code']), str(r['item_name']), str(r['version'])) for _, r in result.iterrows()]
 
     # ─── 批量接口 ──────────────────────────────────────────────────────────────
 
-    def batch_match(self, items: List[Dict[str, str]]) -> Dict[str, List[Tuple[str, str]]]:
+    def batch_match(self, items: List[Dict[str, str]]) -> Dict[str, List[Tuple[str, str, str]]]:
         """
         批量匹配。
 
@@ -997,9 +1006,9 @@ class USSpectPetMatcher:
             items: [{"key": id, "modality": "US", "name": "甲状腺彩超"}, ...]
 
         Returns:
-            {key: [(item_code, item_name), ...]}
+            {key: [(item_code, item_name, version), ...]}
         """
-        result: Dict[str, List[Tuple[str, str]]] = {}
+        result: Dict[str, List[Tuple[str, str, str]]] = {}
         for item in items:
             key = item['key']
             modality = item.get('modality', '')
