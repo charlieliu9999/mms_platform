@@ -48,6 +48,9 @@ test_frontend:
 # ========== 部署到生产环境 ==========
 deploy_production:
   stage: deploy
+  # Merging code must not deploy; production release requires a separate action.
+  when: manual
+  allow_failure: true
   script:
     - echo "==> Deploying MMS Platform to ${VPS_HOST}:${DEPLOY_PATH}"
 
