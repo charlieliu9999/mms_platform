@@ -504,7 +504,7 @@ class MatchEngineOrchestrator:
         ):
             return None
 
-        standard = {"code": candidate["code"], "name": candidate["name"]}
+        standard = {"code": candidate["code"], "name": candidate["name"], "std_version": candidate.get("version", "")}
         return {
             "check_item": str(record),
             "num_standard": 1,
@@ -555,7 +555,7 @@ class MatchEngineOrchestrator:
         """
         委托关键词引擎匹配 US/SPECT/PET，结果包装为统一 dict 格式。
 
-        关键词引擎返回 List[Tuple[item_code, item_name]]，
+        关键词引擎返回 List[Tuple[item_code, item_name, version]]，
         这里转换成与 NLP pipeline 一致的 {'data', 'num_standard', 'score'} 结构。
         """
         record = str(record)
@@ -569,7 +569,7 @@ class MatchEngineOrchestrator:
             )
             return _empty_result(record, tier='error')
 
-        standard = [{'code': code, 'name': name} for code, name in pairs]
+        standard = [{'code': code, 'name': name, 'std_version': version} for code, name, version in pairs]
         # matcher 在保持旧 List 返回协议的同时，通过 _last_* 区分"未识别实体"、
         # "实体存在但标准缺失"和"明确排除"，不能再把所有 [] 都归为词库缺失。
         if standard:

@@ -29,6 +29,7 @@ class MatchNode:
         self.extra: List[dict] = []
         self.standard_check_name: List[str] = []
         self.standard_check_code: List[str] = []
+        self.standard_check_version: List[str] = []
 
         # 置信度信号（由 pipeline 各步骤设置，orchestrator 汇总为四档 tier）
         self.fill_default = False   # Step 9 补充了默认处理方式（部位命中、处理方式为推断）
@@ -281,8 +282,8 @@ class MatchNode:
         - 如果提供 usage_stats，按使用频率降序 → 字母序排序
         - 否则按字母序排序（保持向后兼容）
         """
-        # 组合 code 和 name
-        results = list(zip(self.standard_check_code, self.standard_check_name))
+        # 组合 code, name 和 version
+        results = list(zip(self.standard_check_code, self.standard_check_name, self.standard_check_version))
 
         # Phase 7: 智能排序
         if usage_stats:
@@ -295,8 +296,8 @@ class MatchNode:
         return {
             'raw': self.raw_str,
             'standard': [
-                {'code': c, 'name': n}
-                for c, n in results
+                {'code': c, 'name': n, 'std_version': v}
+                for c, n, v in results
             ],
         }
 
