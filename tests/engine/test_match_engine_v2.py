@@ -281,6 +281,13 @@ def test_v2_spect_match_has_results(v2_engine, record, modality):
     """SPECT 通过统一入口应匹配到非空结果（委托关键词引擎）"""
     result = v2_engine.match(record, modality, "V3.8.2")
     assert result['check_item'] == record
+    if '灌注' in record:
+        standards = [s for block in result['data'] for s in block['standard']]
+        assert all('灌注' in s['name'] for s in standards)
+        if not standards:
+            assert result['reason'] == 'standard_semantic_conflict'
+            assert result['unresolved_components'] == ['灌注显像']
+        return
     assert result['num_standard'] > 0, f"SPECT 无匹配结果: {record}"
 
 

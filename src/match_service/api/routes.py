@@ -38,7 +38,10 @@ async def match_one(req: MatchRequest, session: AsyncSession = Depends(_get_sess
         raise HTTPException(status_code=422, detail="必须提供 text 或 name 字段")
 
     dispatcher = MatchDispatcher(session, holder)
-    result = await dispatcher.match(check_item_text, req.modality, req.version)
+    result = await dispatcher.match(
+        check_item_text, req.modality, req.version,
+        version_is_explicit="version" in req.model_fields_set,
+    )
     return {"result": result, "rule_version": holder.rule_version}
 
 
@@ -50,7 +53,9 @@ async def batch_match(req: BatchRequest, session: AsyncSession = Depends(_get_se
 
     dispatcher = MatchDispatcher(session, holder)
     items = [{"key": it.key, "name": it.name, "modality": it.modality} for it in req.items]
-    response = await dispatcher.batch_match(items, req.version)
+    response = await dispatcher.batch_match(
+        items, req.version, version_is_explicit="version" in req.model_fields_set
+    )
     return response
 
 

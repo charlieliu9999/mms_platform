@@ -106,3 +106,55 @@ def test_snapshot_compare_rejects_dataset_mismatch():
 
     with pytest.raises(evaluator.DatasetContractError, match="datasets differ"):
         evaluator.compare_snapshots(current, baseline)
+
+
+@pytest.mark.asyncio
+async def test_engine_exception_is_recorded_without_secondary_logger_error(monkeypatch):
+    async def load_rows(factory, manifest):
+        return [{"database_id": 1, "semantic_id": "PR0001", "name_zh": "CT头部", "modality": "CT"}]
+
+    class BrokenEngine:
+        def match(self, name, modality):
+            raise RuntimeError("simulated engine failure")
+
+    monkeypatch.setattr(evaluator, "load_canonical_rows", load_rows)
+    rows = await evaluator.run_eval(BrokenEngine(), object(), [])
+    assert len(rows) == 1
+    assert rows[0]["matched"] is False
+    assert rows[0]["tier"] == "error"
+    assert rows[0]["reason"] == "engine_error"
+
+
+def test_snapshot_standards_keep_actual_version():
+    result = {"data": [{"standard": [{"code": "c", "name": "US标准", "version": "v1.1"}]}]}
+    assert evaluator.extract_standards(result) == [{"code": "c", "name": "US标准", "version": "v1.1"}]
+
+
+def test_semantic_conflict_has_its_own_reason():
+    assert evaluator.classify_unmatched({"tier": "none", "has_entity": True, "reason": "standard_semantic_conflict"})[0] == "standard_semantic_conflict"
+    reason, detail = evaluator.classify_unmatched({"tier": "ambiguous", "reason": "multiple_technical_candidates", "unresolved_components": ["颈部静脉"]})
+    assert reason == "parser_ambiguity"
+    assert "颈部静脉" in detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("semantic_id", ["PR1181", "PR3575"])
+async def test_engine_internal_routing_uses_dispatcher_review_policy(monkeypatch, semantic_id):
+    """Breast X-ray + US candidates require review, including internal routing."""
+    async def load_rows(factory, manifest):
+        return [{"database_id": 1, "semantic_id": semantic_id,
+                 "name_zh": "乳腺X线摄影及超声检查", "modality": "DR"}]
+
+    class RoutedEngine:
+        def match(self, name, modality):
+            return {"tier": "degraded", "num_standard": 1,
+                    "modality_routed": True, "effective_modality": "MG",
+                    "data": [{"standard": [{"code": "mg", "name": "乳腺X线摄影"}]}]}
+
+    monkeypatch.setattr(evaluator, "load_canonical_rows", load_rows)
+    monkeypatch.setattr(evaluator, "resolve_effective_modality", lambda name, source: source)
+    rows = await evaluator.run_eval(RoutedEngine(), object(), [])
+
+    assert rows[0]["matched"] is False
+    assert rows[0]["tier"] == "ambiguous"
+    assert rows[0]["reason"] == "modality_route_review"

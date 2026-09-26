@@ -13,8 +13,9 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..cache.service import CacheService
+from ..cache.service import CacheService, standard_versions
 from ..config import get_settings
+from ..engine.catalog_policy import spect_pelvis_bone_only, is_spect_pelvis_policy_result
 from ..engine.modality_resolver import (
     infer_text_modality,
     mentioned_modalities,
@@ -181,6 +182,9 @@ class MatchDispatcher:
                     reason = "routed_result_requires_review"
 
         explicit_modalities = mentioned_modalities(text)
+        if is_spect_pelvis_policy_result(text, result):
+            # CT is explicitly excluded for this approved source procedure.
+            explicit_modalities.discard("CT")
         if len(explicit_modalities) > 1 and result.get("num_standard", 0) > 0:
             matched_modalities = set()
             for block in result.get("data", []) or []:
@@ -214,7 +218,10 @@ class MatchDispatcher:
             result["confidence"] = 0.4
             result["reason"] = reason
 
-    async def match(self, text: str, modality: str, version: str = "V3.8.2") -> dict:
+    async def match(
+        self, text: str, modality: str, version: str = "V3.8.2", *,
+        version_is_explicit: bool = False,
+    ) -> dict:
         """单条匹配：L1 → L2 → (L3 async)"""
 
         # ── 模态归一化 + 高确定性文本路由 ──
@@ -227,14 +234,25 @@ class MatchDispatcher:
             )
 
         # ── L1: 映射库查询 ──
-        cached = await self.cache_service.lookup(
-            text, effective_modality, self.engine_holder.rule_version
+        spect_only_policy = spect_pelvis_bone_only(text)
+        # Historical mappings can contain CT only; keep them intact but do not
+        # reuse or replace them for this user-approved narrow business policy.
+        cached = None if spect_only_policy else await self.cache_service.lookup(
+            text, effective_modality, self.engine_holder.rule_version,
+            requested_version=version, version_is_explicit=version_is_explicit,
         )
+        if (cached is not None and cached.get("_cache_source") == "algorithm"
+                and "engine_modality_routed" not in cached):
+            # Old algorithm rows cannot distinguish engine routing from the
+            # previous caller's source modality. Recompute without deleting.
+            cached = None
         if cached is not None:
+            self._annotate_version_selection(cached, version, version_is_explicit)
             # source_modality 属于本次请求，不能沿用首次写缓存时的来源值。
             cached["source_modality"] = source_modality
             cached.setdefault("effective_modality", effective_modality)
-            text_routed = effective_modality != source_modality
+            text_routed = (bool(cached.get("engine_modality_routed", False))
+                           or effective_modality != source_modality)
             cached["modality_routed"] = text_routed
             self._apply_result_review_policy(
                 cached, text, effective_modality, text_routed, source_modality
@@ -250,18 +268,17 @@ class MatchDispatcher:
             return self._error_result(text, "引擎未就绪")
 
         result = engine.match(text, effective_modality, version)
+        result["engine_modality_routed"] = bool(result.get("modality_routed", False))
+        self._annotate_version_selection(result, version, version_is_explicit)
         # source 属于本次请求；exact-name 层接收到的是 effective modality，
         # 因此这里必须覆盖而不是 setdefault。
         result["source_modality"] = source_modality
         result.setdefault("effective_modality", effective_modality)
-        # 如果引擎已经设置了modality_routed（如Phase 3A的DR→MG强制路由），
-        # 则使用引擎的值；否则根据dispatcher的文本路由判断
-        if "modality_routed" not in result:
-            text_routed = effective_modality != source_modality
-            result["modality_routed"] = text_routed
-        else:
-            # 引擎已设置，保留引擎的判断
-            text_routed = result.get("modality_routed", False)
+        # Preserve engine routing separately; source routing belongs to this
+        # request and must not leak across callers sharing a cache key.
+        text_routed = (result["engine_modality_routed"]
+                       or effective_modality != source_modality)
+        result["modality_routed"] = text_routed
 
         self._apply_result_review_policy(
             result, text, effective_modality, text_routed, source_modality
@@ -271,7 +288,8 @@ class MatchDispatcher:
         confidence = result.get("confidence", 0.0)
 
         # ── L1 回写：高置信结果自动入缓存 ──
-        if tier in AUTO_CACHE_TIERS and confidence >= AUTO_CACHE_MIN_CONFIDENCE:
+        if (not spect_only_policy and tier in AUTO_CACHE_TIERS
+                and confidence >= AUTO_CACHE_MIN_CONFIDENCE):
             # 自动算法命中始终标记 algorithm；agent_confirmed 仅保留给经过
             # Agent/人工确认的映射，避免把 exact=1.0 误当成已审核结果。
             await self.cache_service.store(
@@ -281,6 +299,7 @@ class MatchDispatcher:
                 confidence,
                 "algorithm",
                 self.engine_holder.rule_version,
+                requested_version=version,
             )
             logger.debug(f"[Dispatcher] L2→L1 回写: tier={tier}, conf={confidence:.2f}")
 
@@ -292,8 +311,21 @@ class MatchDispatcher:
         result["_tier"] = tier
         return result
 
+    @staticmethod
+    def _annotate_version_selection(result: dict, selector: str, explicit: bool) -> None:
+        result["catalog_selector"] = selector
+        result["requested_version"] = selector if explicit else None
+        versions = standard_versions(result)
+        fallback = bool(versions and any(v != selector.strip().lower() for v in versions))
+        result["version_fallback"] = fallback
+        confirmed = result.get("_cache_source") in {"manual", "agent_confirmed"}
+        result["version_fallback_reason"] = (
+            "confirmed_mapping" if confirmed else "loaded_modality_catalog_policy"
+        ) if fallback else ""
+
     async def batch_match(
-        self, items: list[dict], version: str = "V3.8.2"
+        self, items: list[dict], version: str = "V3.8.2", *,
+        version_is_explicit: bool = False,
     ) -> dict:
         """批量匹配：逐条走三层分派"""
         results = {}
@@ -306,7 +338,9 @@ class MatchDispatcher:
             modality = item.get("modality", "")
 
             try:
-                result = await self.match(name, modality, version)
+                result = await self.match(
+                    name, modality, version, version_is_explicit=version_is_explicit
+                )
             except Exception as e:
                 logger.error(
                     f"batch_match 单项失败: key={key!r}, name={name!r}, "

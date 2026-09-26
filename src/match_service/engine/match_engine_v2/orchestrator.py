@@ -17,6 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .constants import SPECIAL_ITEM_MARKERS
 from ..modality_resolver import infer_text_modality
+from ..catalog_policy import (
+    SPECT_PELVIS_POLICY, SPECT_PELVIS_STANDARD_NAME, spect_pelvis_bone_only,
+)
 from .data_loader import RuleDataLoader, normalize_standard_name
 from .disambiguation_service import DisambiguationService
 from .dr_splitter import DRSplitter
@@ -217,6 +220,30 @@ class MatchEngineOrchestrator:
         if not self._initialized:
             return _empty_result(record)
 
+        # This exact procedure is approved to retain only static SPECT bone
+        # imaging. Resolve code/version from loaded active standards, never CT.
+        if spect_pelvis_bone_only(record):
+            result = self._match_exact_standard_name(SPECT_PELVIS_STANDARD_NAME, "SPECT")
+            if result is None or not all(
+                standard.get("version")
+                for block in result.get("data", [])
+                for standard in block.get("standard", [])
+            ):
+                result = _empty_result(record, reason="standard_lib_gap")
+            result.update({
+                "check_item": record, "engine": "procedure_business_policy",
+                "business_policy": SPECT_PELVIS_POLICY,
+                "excluded_components": [{"modality": "CT", "name": "CT平扫",
+                                         "reason": "user_approved_spect_only"}],
+                "source_modality": modality, "effective_modality": "SPECT",
+                "modality_routed": modality != "SPECT",
+            })
+            for block in result.get("data", []):
+                block["raw"] = record
+            if trace is not None:
+                trace["op"] = [SPECT_PELVIS_POLICY]
+            return result
+
         # Phase 3A: DR→MG强制路由检查（修复乳腺检查路由）
         # 必须在所有匹配逻辑之前执行，确保所有路径都使用正确的模态
         # 当用户明确指定DR模态，但文本包含乳腺关键词时，强制路由到MG
@@ -269,6 +296,8 @@ class MatchEngineOrchestrator:
                 all_data = []
                 total_score = 0
                 best_tier = 'none'
+                requires_review = False
+                unresolved_components = []
                 for sub_text, sub_mod in hybrid:
                     sub_result = self._match_exact_standard_name(sub_text, sub_mod)
                     if sub_result is None:
@@ -285,6 +314,8 @@ class MatchEngineOrchestrator:
                         all_data.extend(sub_result['data'])
                     total_score += sub_result.get('score', 0)
                     sub_tier = sub_result.get('tier', 'none')
+                    unresolved_components.extend(sub_result.get('unresolved_components', []))
+                    requires_review = requires_review or sub_tier == 'ambiguous' or bool(unresolved_components)
                     if sub_tier in ('exact', 'partial', 'degraded') \
                             and (best_tier == 'none'
                                  or TIER_CONFIDENCE[sub_tier]
@@ -292,6 +323,8 @@ class MatchEngineOrchestrator:
                         best_tier = sub_tier
 
                 num_standard = sum(len(d.get('standard', [])) for d in all_data)
+                if requires_review:
+                    best_tier = 'ambiguous'
                 result = {
                     'check_item': record,
                     'num_standard': num_standard,
@@ -299,7 +332,9 @@ class MatchEngineOrchestrator:
                     'score': total_score,
                     'tier': best_tier if num_standard > 0 else 'none',
                     'confidence': TIER_CONFIDENCE.get(best_tier, 0.0),
-                    'reason': '' if num_standard > 0 else 'standard_lib_gap',
+                    'reason': ('multiple_technical_candidates' if requires_review
+                               else '' if num_standard > 0 else 'standard_lib_gap'),
+                    'unresolved_components': sorted(set(unresolved_components)),
                 }
                 if modality_routed:
                     result['source_modality'] = original_modality
@@ -316,6 +351,8 @@ class MatchEngineOrchestrator:
                     all_data = []
                     total_score = 0
                     best_tier = 'none'
+                    requires_review = False
+                    unresolved_components = []
                     for part in parts:
                         part_result = (
                             self._match_exact_standard_name(part, modality)
@@ -324,10 +361,14 @@ class MatchEngineOrchestrator:
                         if part_result.get('data'):
                             all_data.extend(part_result['data'])
                         total_score += part_result.get('score', 0)
+                        unresolved_components.extend(part_result.get('unresolved_components', []))
+                        requires_review = requires_review or part_result.get('tier') == 'ambiguous' or bool(unresolved_components)
                         if part_result.get('tier') in ('exact', 'partial', 'degraded'):
                             best_tier = part_result['tier']
 
                     num_standard = sum(len(d.get('standard', [])) for d in all_data)
+                    if requires_review:
+                        best_tier = 'ambiguous'
                     result = {
                         'check_item': record,
                         'num_standard': num_standard,
@@ -335,7 +376,9 @@ class MatchEngineOrchestrator:
                         'score': total_score,
                         'tier': best_tier if num_standard > 0 else 'none',
                         'confidence': TIER_CONFIDENCE.get(best_tier, 0.0),
-                        'reason': '' if num_standard > 0 else 'standard_lib_gap',
+                        'reason': ('multiple_technical_candidates' if requires_review
+                                   else '' if num_standard > 0 else 'standard_lib_gap'),
+                        'unresolved_components': sorted(set(unresolved_components)),
                     }
                 else:
                     result = self._kw_match(record, modality)
@@ -439,9 +482,8 @@ class MatchEngineOrchestrator:
                                    source_modality: str) -> dict | None:
         """按规范化名称命中唯一有效标准项。
 
-        标准口径（决策 2026-09-11）：**只使用 v3.8.2**。索引已由
-        ``data_loader._load_standard_table`` 收敛到该版本，因此这里不再需要
-        版本过滤，也不会再出现跨版本同名并存。
+        索引由 data_loader 按固定模态目录政策加载，一个模态一个版本。
+        返回版本来自索引标准记录，不能从请求选择器推断。
 
         候选收敛顺序：
           1. 按模态过滤
@@ -455,6 +497,12 @@ class MatchEngineOrchestrator:
         """
         key = normalize_standard_name(record)
         candidates = self.data_loader.standard_name_index.get(key, [])
+        used_us_alias = not candidates
+        if used_us_alias:
+            # US is a display modality prefix, not an anatomical term. Alias
+            # only loaded active US rows; preserve their actual name/version.
+            alias = key[2:] if key.startswith("US") else key
+            candidates = getattr(self.data_loader, "us_standard_name_alias_index", {}).get(alias, [])
         if not candidates:
             return None
 
@@ -475,6 +523,9 @@ class MatchEngineOrchestrator:
 
         if not modality_filtered:
             return None
+
+        if used_us_alias and len(modality_filtered) > 1:
+            return _empty_result(record, tier="ambiguous", reason="standard_name_alias_collision")
 
         if len(modality_filtered) > 1:
             # 缺陷①修复：调用已存在但从未被调用的编码优先级消歧。
@@ -505,6 +556,8 @@ class MatchEngineOrchestrator:
             return None
 
         standard = {"code": candidate["code"], "name": candidate["name"]}
+        if candidate.get("version"):
+            standard["version"] = candidate["version"]
         return {
             "check_item": str(record),
             "num_standard": 1,
@@ -569,7 +622,14 @@ class MatchEngineOrchestrator:
             )
             return _empty_result(record, tier='error')
 
-        standard = [{'code': code, 'name': name} for code, name in pairs]
+        standard = []
+        for code, name in pairs:
+            item = {'code': code, 'name': name}
+            lookup_version = getattr(self._kw_matcher, 'standard_version', None)
+            actual_version = lookup_version(code, name, modality) if lookup_version else None
+            if isinstance(actual_version, str) and actual_version.strip():
+                item['version'] = actual_version
+            standard.append(item)
         # matcher 在保持旧 List 返回协议的同时，通过 _last_* 区分"未识别实体"、
         # "实体存在但标准缺失"和"明确排除"，不能再把所有 [] 都归为词库缺失。
         if standard:
@@ -590,6 +650,7 @@ class MatchEngineOrchestrator:
             'reason': reason,
             'has_entity': has_entity,
             'engine': 'keyword',
+            'unresolved_components': getattr(self._kw_matcher, '_last_unresolved_components', []),
         }
 
     def _inner_match(self, records: str, process_type: str,

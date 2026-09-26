@@ -16,6 +16,7 @@ import asyncio
 import csv
 import hashlib
 import json
+import logging
 import subprocess
 import sys
 from collections import Counter, defaultdict
@@ -30,6 +31,8 @@ from match_service.core.dispatcher import MatchDispatcher
 from match_service.core.engine_holder import EngineHolder
 from match_service.db import get_engine, get_session_factory
 from match_service.engine.modality_resolver import resolve_effective_modality
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPO_ROOT / "data/evaluation/acr_4555_manifest.csv"
@@ -158,6 +161,9 @@ def norm_modality(modality):
 def classify_unmatched(result):
     tier = result.get("tier", "none")
     has_entity = result.get("has_entity")
+    reason = result.get("reason") or ""
+    if reason == "standard_semantic_conflict":
+        return "standard_semantic_conflict", "candidate changes examination meaning"
     if tier == "error":
         return "engine_error", result.get("reason") or "engine exception"
     if tier == "ambiguous":
@@ -168,6 +174,10 @@ def classify_unmatched(result):
             return "modality_route_review", "cross-modality route needs review"
         if reason == "compound_item_incomplete":
             return "parser_ambiguity", "compound item partially matched"
+        if result.get("unresolved_components"):
+            return "parser_ambiguity", "unresolved components: " + ", ".join(result["unresolved_components"])
+        if reason == "multiple_technical_candidates":
+            return "parser_ambiguity", "multiple examination techniques require review"
         return "parser_ambiguity", "multi-candidate or residual"
     reason = result.get("reason") or ""
     if reason == "unsupported_modality":
@@ -193,7 +203,10 @@ def extract_standards(result):
     standards = []
     for datum in result.get("data", []) or []:
         for standard in datum.get("standard") or []:
-            standards.append({"code": standard.get("code"), "name": standard.get("name")})
+            item = {"code": standard.get("code"), "name": standard.get("name")}
+            if standard.get("version"):
+                item["version"] = standard["version"]
+            standards.append(item)
     return standards
 
 
@@ -239,6 +252,12 @@ async def run_eval(engine, session_factory, manifest_rows, limit=0):
                 "reason": "exc:" + type(exc).__name__,
             }
         result.setdefault("effective_modality", effective)
+        # MatchDispatcher preserves engine routing (for example DR -> MG)
+        # even when the text resolver did not change the input modality.
+        # Use that same signal before applying the shared review policy.
+        result["engine_modality_routed"] = bool(result.get("modality_routed", False))
+        text_routed = result["engine_modality_routed"] or text_routed
+        result["modality_routed"] = text_routed
         MatchDispatcher._apply_result_review_policy(
             result, name, effective, text_routed, source
         )
