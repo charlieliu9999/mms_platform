@@ -1,0 +1,153 @@
+# GitLab CI/CD — MMS Platform 部署到 VPS
+# 架构：本地 Mac shell runner → rsync → VPS:/data/mms-platform/
+# 部署模式：前后端分离（后端9100 + 前端3100）
+
+stages:
+  - test
+  - deploy
+
+variables:
+  DEPLOY_PATH: "/data/mms-platform"
+  VPS_HOST: "220.154.3.166"
+  VPS_USER: "root"
+  BACKEND_PORT: "9100"
+  FRONTEND_PORT: "3100"
+  HEALTH_PATH: "/health"
+
+# ========== 测试阶段 ==========
+test_backend:
+  stage: test
+  script:
+    - echo "Running backend tests..."
+    - cd "${CI_PROJECT_DIR}"
+    - poetry install --no-root
+    - poetry run pytest tests/ -v --tb=short || true
+  only:
+    - main
+    - develop
+    - merge_requests
+  allow_failure: true
+  tags:
+    - shell
+    - macos
+
+test_frontend:
+  stage: test
+  script:
+    - echo "Running frontend build test..."
+    - cd "${CI_PROJECT_DIR}/frontend"
+    - npm install
+    - npm run build
+  only:
+    - main
+    - develop
+    - merge_requests
+  allow_failure: true
+  tags:
+    - shell
+    - macos
+
+# ========== 部署到生产环境 ==========
+deploy_production:
+  stage: deploy
+  # Merging code must not deploy; production release requires a separate action.
+  when: manual
+  allow_failure: true
+  script:
+    - echo "==> Deploying MMS Platform to ${VPS_HOST}:${DEPLOY_PATH}"
+
+    # 1. 备份 VPS 上的 .env 文件
+    - |
+      sshpass -p "${VPS_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+        ${VPS_USER}@${VPS_HOST} \
+        "cd ${DEPLOY_PATH} && cp .env .env.backup.\$(date +%Y%m%d_%H%M%S) 2>/dev/null || true"
+
+    # 2. 双向合并数据目录（从 VPS 拉取到本地）
+    - |
+      echo "Syncing data directories from VPS..."
+      sshpass -p "${VPS_PASSWORD}" rsync -avz \
+        --exclude='__pycache__/' --exclude='*.pyc' \
+        -e "ssh -o StrictHostKeyChecking=no" \
+        ${VPS_USER}@${VPS_HOST}:${DEPLOY_PATH}/logs/ \
+        "${CI_PROJECT_DIR}/logs/" 2>/dev/null || true
+
+    # 3. 全量推送代码到 VPS（不带 --delete）
+    - |
+      echo "Deploying code to VPS..."
+      sshpass -p "${VPS_PASSWORD}" rsync -avz \
+        --exclude='.git/' \
+        --exclude='__pycache__/' \
+        --exclude='*.pyc' \
+        --exclude='.venv/' \
+        --exclude='venv/' \
+        --exclude='node_modules/' \
+        --exclude='.idea/' \
+        --exclude='.vscode/' \
+        --exclude='.claude/' \
+        --exclude='.DS_Store' \
+        --exclude='.env.example' \
+        --exclude='.pytest_cache/' \
+        --exclude='.gitlab-runner/' \
+        --exclude='scratch/' \
+        --exclude='frontend/node_modules/' \
+        --exclude='frontend/dist/' \
+        -e "ssh -o StrictHostKeyChecking=no" \
+        "${CI_PROJECT_DIR}/" \
+        ${VPS_USER}@${VPS_HOST}:${DEPLOY_PATH}/
+
+    # 4. 在 VPS 上构建前端
+    - |
+      echo "Building frontend on VPS..."
+      sshpass -p "${VPS_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+        ${VPS_USER}@${VPS_HOST} \
+        "cd ${DEPLOY_PATH}/frontend && \
+         npm install && \
+         npm run build && \
+         echo 'Frontend build completed'"
+
+    # 5. 重启后端服务（使用 systemd 或 Docker Compose）
+    - |
+      echo "Restarting backend service..."
+      sshpass -p "${VPS_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+        ${VPS_USER}@${VPS_HOST} \
+        "cd ${DEPLOY_PATH} && \
+         docker compose build backend && \
+         docker compose up -d backend && \
+         sleep 10 && \
+         docker ps --format 'table {{.Names}}\t{{.Status}}' | grep mms"
+
+    # 6. 重启前端服务（Nginx 或独立进程）
+    - |
+      echo "Restarting frontend service..."
+      sshpass -p "${VPS_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+        ${VPS_USER}@${VPS_HOST} \
+        "cd ${DEPLOY_PATH} && \
+         docker compose up -d frontend && \
+         sleep 5"
+
+    # 7. 健康检查
+    - |
+      echo "Running health checks..."
+      sshpass -p "${VPS_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+        ${VPS_USER}@${VPS_HOST} \
+        "curl -sf http://localhost:${BACKEND_PORT}${HEALTH_PATH} && echo ' ✓ Backend health OK'"
+
+    - |
+      sshpass -p "${VPS_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+        ${VPS_USER}@${VPS_HOST} \
+        "curl -sf http://localhost:${FRONTEND_PORT}/ && echo ' ✓ Frontend accessible'"
+
+    - echo "==> Deployment successful!"
+    - 'echo "Backend: http://${VPS_HOST}:${BACKEND_PORT}"'
+    - 'echo "Frontend: http://${VPS_HOST}:${FRONTEND_PORT}"'
+
+  only:
+    - main
+
+  environment:
+    name: production
+    url: http://220.154.3.166:3100/
+
+  tags:
+    - shell
+    - macos

@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "medical-match-client"
+version = "1.0.0"
+description = "Python client SDK for medical-match-service"
+authors = ["i-CDSS Team"]
+packages = [{include = "match_client", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+httpx = ">=0.25.0"
+pydantic = ">=2.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

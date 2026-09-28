@@ -1,0 +1,262 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-bg-base: var(--bg-base);
+  --color-bg-card: var(--bg-card);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-border-theme: var(--border-theme);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-brand-color: var(--brand-color);
+}
+
+@layer base {
+  :root {
+    --bg-base: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-subtle: #f1f5f9;
+    --border-theme: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --brand-color: #2563eb;
+  }
+
+  .dark {
+    --bg-base: #09090b;
+    --bg-card: #18181b;
+    --bg-subtle: #27272a;
+    --border-theme: #27272a;
+    --text-primary: #f4f4f5;
+    --text-secondary: #a1a1aa;
+    --brand-color: #3b82f6;
+  }
+
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+}
+
+/* 彻底擦除 Ant Design 默认原生黑底背景 */
+.ant-layout,
+.ant-layout-header,
+.ant-layout-sider {
+  background: transparent !important;
+}
+
+/* 全局统配 AntD 卡片、抽屉、模态框 */
+.ant-card {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-theme) !important;
+  color: var(--text-primary) !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.ant-card-head {
+  background-color: transparent !important;
+  border-bottom-color: var(--border-theme) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-card-body {
+  color: var(--text-primary) !important;
+}
+
+.ant-drawer-content {
+  background-color: var(--bg-card) !important;
+}
+
+.ant-drawer-header {
+  background-color: transparent !important;
+  border-bottom-color: var(--border-theme) !important;
+}
+
+.ant-drawer-title {
+  color: var(--text-primary) !important;
+}
+
+.ant-drawer-body {
+  background-color: var(--bg-card) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-modal-content {
+  background-color: var(--bg-card) !important;
+  border: 1px solid var(--border-theme) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-modal-header {
+  background-color: transparent !important;
+  border-bottom-color: var(--border-theme) !important;
+}
+
+.ant-modal-title {
+  color: var(--text-primary) !important;
+}
+
+.ant-modal-body {
+  background-color: var(--bg-card) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-statistic-title {
+  color: var(--text-secondary) !important;
+}
+
+.ant-statistic-content {
+  color: var(--text-primary) !important;
+}
+
+/* 表格样式修复 */
+.ant-table {
+  background-color: var(--bg-card) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-table-thead > tr > th {
+  background-color: var(--bg-subtle) !important;
+  color: var(--text-primary) !important;
+  border-bottom-color: var(--border-theme) !important;
+}
+
+.ant-table-tbody > tr > td {
+  background-color: var(--bg-card) !important;
+  color: var(--text-primary) !important;
+  border-bottom-color: var(--border-theme) !important;
+}
+
+.ant-table-tbody > tr:hover > td {
+  background-color: var(--bg-subtle) !important;
+}
+
+.ant-table-striped .ant-table-tbody > tr:nth-child(2n) > td {
+  background-color: var(--bg-subtle) !important;
+}
+
+.ant-table-striped .ant-table-tbody > tr:nth-child(2n):hover > td {
+  background-color: var(--bg-subtle) !important;
+  filter: brightness(0.98);
+}
+
+/* 输入框样式修复 */
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select-selector {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-theme) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-input::placeholder,
+.ant-input-affix-wrapper input::placeholder {
+  color: var(--text-secondary) !important;
+}
+
+.ant-input:hover,
+.ant-input-affix-wrapper:hover,
+.ant-select-selector:hover {
+  border-color: var(--brand-color) !important;
+}
+
+.ant-input:focus,
+.ant-input-affix-wrapper:focus,
+.ant-input-affix-wrapper-focused {
+  border-color: var(--brand-color) !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1) !important;
+}
+
+/* Select 下拉框样式 */
+.ant-select-dropdown {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-theme) !important;
+}
+
+.ant-select-item {
+  color: var(--text-primary) !important;
+}
+
+.ant-select-item-option-selected {
+  background-color: var(--bg-subtle) !important;
+  color: var(--brand-color) !important;
+}
+
+.ant-select-item-option-active {
+  background-color: var(--bg-subtle) !important;
+}
+
+/* 分页器样式 */
+.ant-pagination {
+  color: var(--text-primary) !important;
+}
+
+.ant-pagination-item {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-theme) !important;
+}
+
+.ant-pagination-item a {
+  color: var(--text-primary) !important;
+}
+
+.ant-pagination-item-active {
+  background-color: var(--brand-color) !important;
+  border-color: var(--brand-color) !important;
+}
+
+.ant-pagination-item-active a {
+  color: #ffffff !important;
+}
+
+/* 按钮样式 */
+.ant-btn {
+  border-color: var(--border-theme) !important;
+}
+
+.ant-btn-default {
+  background-color: var(--bg-card) !important;
+  color: var(--text-primary) !important;
+}
+
+.ant-btn-default:hover {
+  background-color: var(--bg-subtle) !important;
+  border-color: var(--brand-color) !important;
+  color: var(--brand-color) !important;
+}
+
+/* Tag 标签样式修复 */
+.ant-tag {
+  background-color: var(--bg-subtle) !important;
+  border-color: var(--border-theme) !important;
+  color: var(--text-primary) !important;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(161, 161, 170, 0.2);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}

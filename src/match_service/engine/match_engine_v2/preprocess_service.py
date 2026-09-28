@@ -1,0 +1,360 @@
+"""
+文本预处理服务
+"""
+import re
+from typing import List, Tuple
+
+import pandas as pd
+
+from .bracket_modifier_handler import BracketModifierHandler
+from .constants import (
+    CHN_PUNCT,
+    ENG_PUNCT,
+    FULL_ANGLE,
+    HALF_ANGLE,
+    VERSION_FALLBACK,
+)
+
+# 全角半角转换表
+_full2half = str.maketrans(FULL_ANGLE, HALF_ANGLE)
+_chn2eng = str.maketrans(CHN_PUNCT, ENG_PUNCT)
+
+
+class PreprocessService:
+    """文本预处理服务"""
+
+    def __init__(self, pre_rules: dict):
+        """
+        Args:
+            pre_rules: {modality: pd.DataFrame} 预处理规则
+        """
+        self.pre_rules = pre_rules
+        self.bracket_handler = BracketModifierHandler()
+
+    def preprocess(self, text: str, modality: str, version: str) -> Tuple[str, BracketModifierHandler]:
+        """
+        预处理文本
+
+        步骤：
+        0. 剥离方括号修饰语（CT头部平扫[薄层] -> CT头部平扫）
+        1. 全角→半角
+        2. 中文标点→英文标点
+        3. 特殊字符替换
+        4. 脊椎节段补全
+        5. 数据库规则替换
+
+        Returns:
+            (处理后的文本, 方括号处理器) - 处理器用于审计被剥离的内容
+        """
+        # 0. 剥离方括号修饰语（在所有其他处理之前）
+        text = self.bracket_handler.protect_brackets(text)
+
+        text = self._convert_full2half(text)
+        text = self._convert_chn2eng(text)
+        text = self._normalize_special_chars(text)
+        text = self._expand_left_right(text)
+        text = self._complete_vertebra_segments(text)
+        text = self._apply_db_rules(text, modality, version)
+        # RF 造影类别名归一化（标准库命名以"结肠/肾盂"等解剖部位为准）
+        if modality == 'RF':
+            text = text.replace('灌肠造影', '结肠造影')
+            text = text.replace('灌肠', '结肠')
+            text = text.replace('下消化道', '结肠')
+        # DR 骨密度检查 → 骨密度测定（标准库命名，配合词库 scan 类型）
+        if modality == 'DR':
+            text = text.replace('骨密度检查', '骨密度测定')
+        return text, self.bracket_handler
+
+    @staticmethod
+    def _convert_full2half(text: str) -> str:
+        """全角转半角"""
+        return text.translate(_full2half)
+
+    @staticmethod
+    def _convert_chn2eng(text: str) -> str:
+        """中文标点转英文"""
+        return text.translate(_chn2eng)
+
+    @staticmethod
+    def _normalize_special_chars(text: str) -> str:
+        """特殊字符归一化"""
+        text = (text.replace('—', '-').replace('\\', '/')
+                .replace('上、中、下', '上中下')
+                .replace('中、下', '中下').replace('上、中', '上中')
+                .replace('中、上', '中上').replace('上、下', '上下')
+                .upper().replace('T1WI', '').replace('T2WI', '')
+                .replace('DWI', '').replace('STIR', '')
+                .replace('弥散加权成像', '').replace('扩散加权成像', '')
+                .replace('弥散', '').replace('扩散', ''))
+
+        # 剥离特殊MR序列修饰语（标准库命名不含这些，需归一化）
+        # 涵盖：SWI、FLAIR、3D-FLAIR、3D-STIR-TSE、化学位移等
+        special_sequences = [
+            # 长词优先，避免 "3D-FLAIR序列" 被 "FLAIR序列" 截断残留 "3D-"
+            '3D-FLAIR序列', '3D-FLAIR', '3D-STIR-TSE', '3D-STIR',
+            'SWI序列', 'SWI',
+            'FLAIR序列', 'FLAIR',
+            '化学位移成像', '化学位移',
+            'TRUFI', 'HASTE', 'FIESTA',
+        ]
+        for seq in special_sequences:
+            text = text.replace(seq, '')
+
+        # 去除连字符（保护医学缩写 CE-MRA/CE-MRV/CE-CT 等，Step 8.5 依赖原文判断增强）
+        _protected = ('CE-MRA', 'CE-MRV', 'CE-CT', 'CE-MRI')
+        for term in _protected:
+            text = text.replace(term, term.replace('-', '\x01'))
+        text = re.sub(r'([A-Za-z]+)-([A-Za-z]+)', r'\1\2', text)
+        for term in _protected:
+            text = text.replace(term.replace('-', '\x01'), term)
+
+        # 脊椎节段字母标准化
+        text = re.sub(r'-颈(\d)', r'-C\1', text)
+        text = re.sub(r'-胸(\d)', r'-T\1', text)
+        text = re.sub(r'-腰(\d)', r'-L\1', text)
+        text = re.sub(r'-骶(\d)', r'-S\1', text)
+
+        # 去除括号中扫描范围
+        text = re.sub(r'[(|（][一-龥]+至[一-龥]+[)|）]', '', text)
+
+        # 低剂量扫描归一化为平扫（标准表中无单独低剂量项目）
+        text = text.replace('(低剂量扫描)', '(平扫)')
+        text = text.replace('（低剂量扫描）', '(平扫)')
+        text = re.sub(r'低剂量(扫描|平扫)', '平扫', text)
+
+        # 双能量CT修饰语剥离（标准库命名为"能量扫描"，见 CT能谱扫描）
+        text = re.sub(r'[(（]?双能量CT[)）]?', '', text)
+
+        # FFRCT/CT-FFR 功能学评估剥离（不影响 CT 冠状动脉血管成像匹配）
+        text = re.sub(r'[+及与]FFRCT', '', text)
+        text = re.sub(r'[(（]?FFRCT[)）]?', '', text)
+        text = re.sub(r'联合CT血流储备分数[^)）]*[)）]?', '', text)
+        text = re.sub(r'[+及与]CT[-]?FFR[)）]?', '', text)
+
+        # MR 含增强及血管成像序列 → (平扫+增强)（"MRI肝脏（含增强及血管成像序列）"）
+        text = re.sub(r'[(（]含[^)）]*血管成像[^)）]*[)）]', '(平扫+增强)', text)
+
+        # 部位别名归一化
+        text = text.replace('鼻窦', '副鼻窦')
+
+        # === 技术描述规范化（算法资产：减少解析残留）===
+        # 特殊造影方式归一化
+        text = re.sub(r'[(（]?直接造影[)）]?', '(增强)', text)
+        text = re.sub(r'[(（]?脊髓造影[)）]?', '(增强)', text)
+
+        # 钆造影归一化为增强（MR内耳经静脉/经鼓室钆造影等）
+        text = re.sub(r'[(（]?经静脉钆造影[)）]?', '(增强)', text)
+        text = re.sub(r'[(（]?经鼓室钆造影[)）]?', '(增强)', text)
+        text = re.sub(r'钆造影', '增强', text)
+        # 清理归一化后括号内残留运算符，如 "(增强+)" 的尾部 "+"
+        text = re.sub(r'[+][)）]', ')', text)
+        text = re.sub(r'[+-]+$', '', text)
+
+        # 多期增强+血管成像 → CTA
+        text = re.sub(r'[(（]?双?低?剂量?多期(动态)?增强[+及与]血管成像[)）]?', '(CTA)', text)
+        text = re.sub(r'[(（]?多期(动态)?增强[+及与]血管成像[)）]?', '(CTA)', text)
+        text = re.sub(r'[(（]?增强[+及与]血管成像[)）]?', '(CTA)', text)
+        text = re.sub(r'[(（]?血管成像[+及与]多期增强[)）]?', '(CTA)', text)
+        
+        # 心电门控 → 移除（技术参数，不影响匹配）
+        text = re.sub(r'心电门控(增强)?多排螺旋CT', '增强', text)
+        text = re.sub(r'[(（]?心电门控[)）]?', '', text)
+        text = re.sub(r'[(（]?前瞻性门控[)）]?', '', text)
+        text = re.sub(r'[(（]?回顾性门控[)）]?', '', text)
+        
+        # 多排螺旋CT → 移除
+        text = re.sub(r'多排螺旋CT', '', text)
+        text = re.sub(r'MSCT', '', text)
+        
+        # 重建方式规范化
+        text = re.sub(r'[(（]?多平面重组[)）]?', '(MPR)', text)
+        text = re.sub(r'[(（]?多平面重建[)）]?', '(MPR)', text)
+        text = re.sub(r'[(（]?容积再现[)）]?', '(VR)', text)
+        text = re.sub(r'[(（]?容积重建[)）]?', '(VR)', text)
+        text = re.sub(r'MPR[+及与]VR', 'MPR,VR', text)  # 联合重建拆成子项
+        
+        # 分辨率描述 → 移除
+        text = re.sub(r'[(（]?超?高分辨率?[)）]?', '', text)
+        text = re.sub(r'[(（]?UHR模式[)）]?', '', text)
+        
+        # 增强期别规范化（动静脉双期、动脉期、静脉期 → 增强）
+        text = re.sub(r'(动静脉)?双期增强', '增强', text)
+        text = re.sub(r'动脉期增强', '增强', text)
+        text = re.sub(r'静脉期增强', '增强', text)
+
+        # 泛指部位清理（让引擎走"非指定部位"降级分支）
+        # 这些词汇无法对应具体解剖部位，删除后保留扫描方式，匹配"无部位"标准项
+        generic_body_patterns = [
+            r'受累关节',
+            r'受累部位',
+            r'病变部位',
+            r'可疑部位',
+            r'目标部位',
+            r'指定部位',
+            r'相关部位',
+            r'中枢神经系统',  # 胎儿中枢神经系统 → 胎儿（MR胎儿(平扫) 为唯一标准项）
+        ]
+        for pattern in generic_body_patterns:
+            text = re.sub(pattern, '', text)
+
+        return text
+
+    @staticmethod
+    def _expand_left_right(text: str) -> str:
+        """左右并列展开："左|右膝关节" → "左膝关节,右膝关节"
+
+        分词器会把孤立的"左"标为 other 丢弃，导致并列表达只剩单侧。
+        展开成逗号分隔后由 split_record 拆成两个子项分别匹配。
+        """
+        text = re.sub(r'左[|/]右([一-龥]+)', r'左\1,右\1', text)
+        text = re.sub(r'右[|/]左([一-龥]+)', r'右\1,左\1', text)
+        return text
+
+    @staticmethod
+    def _complete_vertebra_segments(text: str) -> str:
+        """脊椎节段补全"""
+        # 颈椎（H3 修复：字符类中 | 是字面量，改用非捕获组）
+        if '颈椎' not in text:
+            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)(?:C|颈)(\d+)', r'\1颈椎C\2', text)
+        # 胸椎
+        if '胸椎' not in text:
+            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)(?:T|胸)(\d+)', r'\1胸椎T\2', text)
+        # 腰椎
+        if '腰椎' not in text:
+            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)(?:L|腰)(\d+)', r'\1腰椎L\2', text)
+        # 骶椎
+        if '骶椎' not in text:
+            text = re.sub(r'(\||^|;|,|以|及|、|，|（|\(|\+|:)(?:S|骶)(\d+)', r'\1骶椎S\2', text)
+
+        # 段合并
+        text = re.sub(r'(T\d+[-~]L\d)', r'胸腰段\1', text)
+        text = re.sub(r'(L\d+[-~]S\d)', r'腰骶段\1', text)
+        text = re.sub(r'(C\d+[-~]T\d)', r'颈胸段\1', text)
+
+        return text
+
+    def _apply_db_rules(self, text: str, modality: str, version: str) -> str:
+        """应用数据库预处理规则"""
+        if modality not in self.pre_rules:
+            return text
+
+        rules = self.pre_rules[modality]
+        if rules.empty:
+            return text
+
+        # 版本回退
+        version_rules = pd.DataFrame()
+        for ver in VERSION_FALLBACK.get(version, [version]):
+            version_rules = rules[rules['version'] == ver]
+            if not version_rules.empty:
+                break
+
+        # 应用替换规则
+        for _, row in version_rules.iterrows():
+            text = text.replace(row['src_word'], row['dst_word'])
+
+        return text
+
+    def split_record(self, record: str, default_modality: str) -> List[Tuple[str, int, str]]:
+        """
+        拆分记录为子项
+
+        Returns:
+            [(modality, index, item), ...]
+        """
+        parts = re.split(r'[,;，。；\n]', record)
+        result = []
+        for idx, item in enumerate(parts):
+            item = item.strip()
+            if not item:
+                continue
+            # 跨模态联合拆分："X联合Y"（X/Y 模态前缀不同）→ 两个独立子项，
+            # 各配各的标准（组合语义）。同模态技术联合（如"高低频联合彩超"）
+            # 不拆分，避免把同一检查的技术描述拆散。
+            if '联合' in item:
+                left, _, right = item.partition('联合')
+                left_mod = self._detect_modality_prefix(left)
+                right_mod = self._detect_modality_prefix(right)
+                if (left_mod and right_mod and left_mod != right_mod
+                        and left.strip() and right.strip()):
+                    for sub in (left.strip(), right.strip()):
+                        detected = self._detect_modality(sub, default_modality)
+                        result.append((detected, idx, sub))
+                    continue
+            detected = self._detect_modality(item, default_modality)
+            result.append((detected, idx, item))
+        return result
+
+    @staticmethod
+    def _detect_modality_prefix(text: str) -> str:
+        """提取文本中的高置信模态前缀（供跨模态联合拆分判断）"""
+        upper = str(text or '').upper()
+        if re.search(r'PET\s*[-/]?\s*(?:MRI|MR)(?![A-Z])', upper):
+            return 'PET/MR'
+        if re.search(r'PET\s*[-/]?\s*CT(?![A-Z])', upper):
+            return 'PET/CT'
+        if re.search(r'SPECT', upper):
+            return 'SPECT'
+        if re.search(r'超声|彩超|US(?![A-Z])', upper):
+            return 'US'
+        if re.search(r'MRI|MRA|MRV|MR(?![A-Z])', upper):
+            return 'MR'
+        if re.search(r'乳腺断层|断层摄影|钼靶', upper):
+            return 'MG'
+        if re.search(r'X\s*线|DR|CR', upper):
+            return 'DR'
+        if re.search(r'CTA|CT(?![A-Z])', upper):
+            return 'CT'
+        if re.search(r'RF', upper):
+            return 'RF'
+        if re.search(r'DSA|血管造影', upper):
+            return 'DSA'
+        return None
+
+    @staticmethod
+    def _detect_modality(item: str, default: str) -> str:
+        """
+        从文本推断模态
+
+        检测顺序：复合模态（PET/CT 等）→ 超声 → MR → 钼靶 → DR → CT → RF
+        """
+        upper = item.upper()
+
+        # 超声
+        if '彩超' in item or '超声' in item or 'B超' in item:
+            return 'US'
+
+        # 复合模态（优先排除）
+        if 'PET/CT' in upper or 'PET/MR' in upper or 'SPECT' in upper:
+            return default
+
+        # MR
+        if 'MR' in upper or '磁共振' in item:
+            return 'MR'
+
+        # 钼靶
+        if '钼靶' in item:
+            return 'MG'
+        # 乳腺关键词路由到 MG 仅限摄影类检查（X线/DR 乳腺钼靶、断层）；
+        # "乳腺导管造影"是 RF 专有检查，不得被路由到 MG。
+        if any(k in item for k in ('乳腺', '双乳', '左乳', '右乳', '乳房')):
+            if default in ('DR', 'MG', '') and not (
+                '造影' in item or '导管' in item or '超声' in item
+            ):
+                return 'MG'
+            if '断层' in item or '摄影' in item or '钼靶' in item:
+                return 'MG'
+
+        # DR
+        if 'DR' in upper:
+            return 'DR'
+
+        # CT
+        if 'CT' in upper:
+            return 'CT'
+
+        # RF (造影)
+        if default not in ('CT', 'MR') and ('钡餐' in item or '造影' in item):
+            return 'RF'
+
+        return default

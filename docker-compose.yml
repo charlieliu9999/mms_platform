@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # 后端服务
+  backend:
+    container_name: mms-platform-backend
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "9100:8000"
+    environment:
+      - MATCH_SVC_DATABASE_URL=postgresql+asyncpg://postgres:postgres@acrac_web_mgmt_postgres_prod:5432/acrac_db
+      - MATCH_SVC_REDIS_URL=redis://acrac_web_mgmt_redis_prod:6379/0
+      - MATCH_SVC_ENGINE_MODE=local
+      - MATCH_SVC_LOG_LEVEL=INFO
+    volumes:
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    networks:
+      - default
+      - acrac_web_mgmt_acrac_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 前端服务（Nginx）
+  frontend:
+    container_name: mms-platform-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3100:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  acrac_web_mgmt_acrac_network:
+    external: true
+  default:
+    driver: bridge
