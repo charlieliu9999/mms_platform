@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .constants import SPECIAL_ITEM_MARKERS
-from ..modality_resolver import infer_text_modality
+from ..modality_resolver import infer_text_modality, resolve_effective_modality
 from ..catalog_policy import (
     SPECT_PELVIS_POLICY, SPECT_PELVIS_STANDARD_NAME, spect_pelvis_bone_only,
 )
@@ -1029,25 +1029,34 @@ class MatchEngineOrchestrator:
             modality = item.get('modality', '')
             name = item.get('name', '')
 
+            # 空/未知模态：与 dispatcher 单条路径一致，先按显式文本推断模态，
+            # 再判断是否可匹配。批量入口不能因为上游未传 modality 就直接丢弃条目。
+            effective_modality = (
+                resolve_effective_modality(name, modality) if name else modality
+            )
+
             # Phase 1 改进：优先检查 unmatchable 标记（所有模态，包括不支持的）
             # 这样可以正确识别 XR/CBCT/ES/SURG 等模态中的非影像检查
             if name:
-                is_unmatchable, reason = self._check_unmatchable(name, modality)
+                is_unmatchable, reason = self._check_unmatchable(name, effective_modality)
                 if is_unmatchable:
                     result[key] = {'pairs': [], 'score': 0, 'tier': 'none',
                                    'confidence': 0.0,
+                                   'effective_modality': effective_modality,
                                    'reason': self._normalize_unmatchable_reason(reason),
                                    'has_entity': None}
                     continue
 
             # 不支持模态（无 unmatchable 标记）：无引擎实体信号，reason 留空
-            if not name or modality not in self.SUPPORTED_MODALITIES:
+            if not name or effective_modality not in self.SUPPORTED_MODALITIES:
                 result[key] = {'pairs': [], 'score': 0, 'tier': 'none',
-                               'confidence': 0.0, 'reason': '', 'has_entity': None}
+                               'confidence': 0.0,
+                               'effective_modality': effective_modality,
+                               'reason': '', 'has_entity': None}
                 continue
 
             try:
-                match_result = self.match(name, modality, version)
+                match_result = self.match(name, effective_modality, version)
                 pairs = []
                 for d in match_result.get('data', []):
                     for std in d.get('standard', []):
