@@ -33,6 +33,31 @@ poetry run python scripts/evaluate_acr_4555.py
 
 ---
 
+## 代码线权威性（必读）
+
+- 唯一权威代码线是 GitHub `charlieliu9999/mms_platform` 的 `main`。生产
+  release（`/data/mms-releases/<release>/src`）的源码必须能与该 `main` 对齐，
+  并与 `POST /api/rules/snapshot` 报告的规则版本一起构成发布身份。
+- GitLab `http://192.168.0.155/liuzhaohui/mms_platform.git` 的 `main` 是**只读
+  镜像**：只允许把 GitHub `main` 强制同步过去，禁止直接在 GitLab 上推送或
+  合并。GitLab 的 `codex/*` 等历史分支保留为归档，不再作为开发起点。
+- 分叉原因：GitLab `main` 停在 `8302ff7`（2026-09-26，缺少
+  `migrations/independent/` 独立库迁移，且使用已废弃的 `std_version` 契约），
+  与 GitHub 线无共同祖先。旧线完整保留在 GitLab 分支
+  `archive/pre-unify-8302ff7`。
+- 同步命令（把 GitHub `main` 镜像到 GitLab，需要人工确认后执行）：
+
+```bash
+git fetch github main
+git push origin github/main:refs/heads/main --force-with-lease=main
+```
+
+- 本机 `mms_platform` 主工作树仍可能停留在旧 GitLab 线上并带有未提交的
+  开发内容；不要用 `git reset --hard`、`git checkout --` 或整目录覆盖来"对齐"
+  它，先把未提交改动落地到 GitHub 线的任务分支。
+
+---
+
 ## 项目概述
 
 MMS (Medical Match Service) - 医学影像检查项目标准化匹配服务。独立的 FastAPI 后端 + React 前端，提供三层匹配架构（映射库→算法引擎→AI Agent）。
