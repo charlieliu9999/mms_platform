@@ -70,6 +70,20 @@ US_BODY_KEYWORDS: List[Tuple[List[str], str]] = [
     (['腮腺'], '腮腺'),
     (['颌下腺'], '颌下腺'),
     (['舌下腺'], '舌下腺'),
+    # ── 颈部血管泛称（t385）──
+    # 标准库只有"颈部(包块)"一条颈部项，泛称"颈部血管/颈部动脉/颈部多普勒"
+    # 先命中"颈部"(priority 28) 再被 match() 的血管安全过滤器剥空，退化为
+    # standard_semantic_conflict。负数优先级排在"颈部"之前，且针对原始医嘱
+    # 求值（见 _extract_us_body 的 regex_text）。
+    # 前缀 ^(?!.*…) 为排除项：包块/肿块/淋巴结不属血管检查，颈部与其他血管的
+    # 联合检查（上腔静脉/上肢/下肢/锁骨下/头臂）不整体改判，"瘤"排除
+    # 颈部血管瘤/颈部动脉瘤；这些保持原"交人工复核"路径。
+    (['^(?!.*(?:上肢|下肢|上腔静脉|锁骨下|头臂|包块|肿块|淋巴结|瘤))'
+      '.*颈部静脉.*'], '双侧颈静脉'),
+    (['^(?!.*(?:上肢|下肢|上腔静脉|锁骨下|头臂|包块|肿块|淋巴结|瘤))'
+      '.*颈部(?:血管|动脉|动静脉)'], '双侧颈动脉'),
+    (['^(?!.*(?:上肢|下肢|上腔静脉|锁骨下|头臂|包块|肿块|淋巴结|瘤))'
+      '.*颈部.*多普勒'], '双侧颈动脉'),
     (['颈部'], '颈部'),
     (['男性生殖'], '男性生殖器'),
     # ── 心血管 ──
@@ -678,7 +692,10 @@ class USSpectPetMatcher:
         #    回退原因：_normalize_us_name 会剥离"超声"前缀，
         #    对"超声心动"这类标准化后只剩"心动"无法匹配部位规则的输入，
         #    需用原始文本兜底（含"超声心动图"等关键词规则）。
-        body_l2 = self._extract_us_body(text_norm, normalized)
+        #    正则类规则（含 ".*" 的血管/多普勒限定语）必须针对原始医嘱求值：
+        #    标准化会剥离"彩色多普勒/超声检查"等后缀，导致
+        #    "颈部(彩色多普勒超声检查)"只剩"颈部"，被区域规则吞掉。
+        body_l2 = self._extract_us_body(text_norm, normalized, order_name)
         if not body_l2:
             orig_upper = order_name.upper().replace('（', '(').replace('）', ')')
             body_l2 = self._extract_us_body(orig_upper, order_name)
@@ -789,11 +806,23 @@ class USSpectPetMatcher:
 
         return core
 
-    def _extract_us_body(self, text_upper: str, original: str) -> Optional[str]:
+    def _extract_us_body(self, text_upper: str, original: str,
+                         raw_order: Optional[str] = None) -> Optional[str]:
+        """按规则顺序提取 body_part_l2。
+
+        ``raw_order`` 仅供以 "^" 锚定的规则求值：这类规则编码的是血管、
+        多普勒等检查方式限定语，标准化会剥离它们，必须针对原始医嘱判断
+        （如"颈部(彩色多普勒超声检查)"标准化后只剩"颈部"）。
+        未锚定的规则仍只在标准化文本上匹配，避免括号内容或检查方式后缀
+        抢注部位（如"盆腔（卵巢/睾丸）"被"睾丸"规则抢走、
+        "乳腺（含腋窝）"被"乳腺.*腋窝"规则改判）。
+        """
+        raw = raw_order if raw_order is not None else original
         for keywords, body_l2 in self._us_body_keywords:
             for kw in keywords:
                 if '.*' in kw:
-                    if re.search(kw, original):
+                    target = raw if kw.startswith('^') else original
+                    if re.search(kw, target):
                         return body_l2
                 elif kw in original or kw in text_upper:
                     return body_l2
